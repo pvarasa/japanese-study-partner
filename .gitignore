@@ -1,0 +1,55 @@
+# Secrets / environment
+.env
+.env.*
+!.env.example
+
+# Local database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/nihongo.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+.uv-cache/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build artifacts
+frontend/dist/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Dev helpers
+.dev-pids.json
+
+# Claude Code local config (personal — not for sharing)
+.claude/settings.local.json
+
+# Whisper / HF model cache (if ever placed locally)
+.cache/
+models/

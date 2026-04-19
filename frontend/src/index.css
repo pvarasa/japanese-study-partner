@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  @apply bg-gray-950 text-gray-100 antialiased;
+  margin: 0;
+}
+
+/* Japanese text styling */
+:root {
+  --jp-scale: 1;
+  --rt-scale: 0.5;
+}
+
+.jp-text {
+  font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+  font-size: calc(1em * var(--jp-scale));
+}
+
+/* For long-form reading: serif JP face, generous line-height.
+   Use on passage bodies and tutor questions/rewrites — not on UI chrome. */
+.jp-reading {
+  font-family: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  font-size: calc(1em * var(--jp-scale));
+  line-height: 2;
+  letter-spacing: 0.01em;
+}
+
+rt {
+  font-size: calc(1em * var(--rt-scale));
+  color: var(--color-gray-500);
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, rgb(31 41 55) 0%, rgb(55 65 81) 50%, rgb(31 41 55) 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.6s linear infinite;
+}
