@@ -7,7 +7,7 @@ from anthropic import Anthropic
 from ..database import get_db
 from ..llm import parse_json_response
 from ..models import Item
-from ..schemas import StudyQuestion, ReadingPassage, ReadingWord
+from ..schemas import StudyQuestion, ReadingPassage, ReadingWord, ExampleSentence
 from .settings import get_jlpt_level, LEVEL_DESCRIPTOR, READING_LENGTH, NEW_WORD_TIER
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
@@ -78,6 +78,60 @@ def generate_question(item_id: int, mode: str, db: Session = Depends(get_db)):
         options=data.get("options", []),
         context=data.get("context"),
     )
+
+
+EXAMPLE_SENTENCE_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
+
+Generate ONE natural example sentence using this item:
+- Japanese: {japanese}
+- Reading: {reading}
+- Meaning: {meaning}
+- Type: {type}
+
+Requirements:
+- The sentence must be natural and contextually appropriate
+- Match grammar/vocabulary difficulty to JLPT {level}
+- Use the word/grammar naturally in context
+- Do NOT reuse any of these existing examples: {examples}
+
+Return JSON with:
+- "japanese": the example sentence in Japanese
+- "english": natural English translation
+
+Return ONLY valid JSON."""
+
+
+@router.post("/example-sentence", response_model=ExampleSentence)
+def generate_example_sentence(item_id: int, db: Session = Depends(get_db)):
+    item = db.query(Item).filter(Item.id == item_id).first()
+    if not item:
+        raise HTTPException(404, "Item not found")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+
+    level = get_jlpt_level(db)
+    client = Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=256,
+        messages=[{
+            "role": "user",
+            "content": EXAMPLE_SENTENCE_PROMPT.format(
+                level=level,
+                descriptor=LEVEL_DESCRIPTOR[level],
+                type=item.type,
+                japanese=item.japanese,
+                reading=item.reading or "",
+                meaning=item.meaning,
+                examples=item.example_sentences or "[]",
+            ),
+        }],
+    )
+
+    data = parse_json_response(message.content[0].text)
+    return ExampleSentence(japanese=data["japanese"], english=data["english"])
 
 
 READING_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.

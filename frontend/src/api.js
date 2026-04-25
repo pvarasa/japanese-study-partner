@@ -64,6 +64,8 @@ export const api = {
   // Generate
   generateQuestion: (itemId, mode) =>
     request(`/generate/question?item_id=${itemId}&mode=${mode}`, { method: 'POST' }),
+  generateExampleSentence: (itemId) =>
+    request(`/generate/example-sentence?item_id=${itemId}`, { method: 'POST' }),
   generateReading: (prompt) =>
     request('/generate/reading', { method: 'POST', body: form({ prompt }) }),
 

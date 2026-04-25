@@ -95,6 +95,11 @@ class ReadingPassage(BaseModel):
     translation: str
 
 
+class ExampleSentence(BaseModel):
+    japanese: str
+    english: str
+
+
 class DashboardStats(BaseModel):
     total_items: int
     due_today: int

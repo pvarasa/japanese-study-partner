@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { RotateCcw, ArrowRight, Zap, CheckCircle, X } from 'lucide-react'
+import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2 } from 'lucide-react'
 import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
@@ -24,6 +24,8 @@ export default function Study() {
   const [answerChecked, setAnswerChecked] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [generatedExample, setGeneratedExample] = useState(null)
+  const [generatingExample, setGeneratingExample] = useState(false)
 
   const startStudy = async (m) => {
     setMode(m)
@@ -72,6 +74,8 @@ export default function Study() {
       setQuestion(null)
       setUserAnswer('')
       setAnswerChecked(false)
+      setGeneratedExample(null)
+      setGeneratingExample(false)
 
       if (mode === 'fill_blank' || mode === 'sentence_build') {
         setLoading(true)
@@ -217,6 +221,32 @@ export default function Study() {
                 <div className="mt-3 text-sm text-left bg-gray-800 rounded-lg p-3">
                   <Ruby text={examples[0].japanese} className="text-gray-200" />
                   <div className="text-gray-500 mt-1">{examples[0].english}</div>
+                </div>
+              )}
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  setGeneratingExample(true)
+                  try {
+                    const ex = await api.generateExampleSentence(item.id)
+                    setGeneratedExample(ex)
+                  } catch (err) {
+                    console.error(err)
+                  }
+                  setGeneratingExample(false)
+                }}
+                disabled={generatingExample}
+                className="mt-3 flex items-center gap-1.5 text-xs text-indigo-400 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {generatingExample
+                  ? <><Loader2 size={13} className="animate-spin" /> Generating…</>
+                  : <><Sparkles size={13} /> {generatedExample ? 'New example' : 'Generate example'}</>
+                }
+              </button>
+              {generatedExample && (
+                <div className="mt-2 text-sm text-left bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-3">
+                  <Ruby text={generatedExample.japanese} className="text-gray-200" />
+                  <div className="text-gray-500 mt-1">{generatedExample.english}</div>
                 </div>
               )}
             </div>
