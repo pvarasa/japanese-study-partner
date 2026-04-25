@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .database import engine, Base
 from .routers import items, study, ingest, generate, furigana, settings, transcribe, converse
+from .routers.transcribe import whisper_enabled
 import os
 
 Base.metadata.create_all(bind=engine)
@@ -34,6 +35,11 @@ app.include_router(converse.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/features")
+def features():
+    return {"whisper_enabled": whisper_enabled()}
 
 
 # Serve frontend static files in production

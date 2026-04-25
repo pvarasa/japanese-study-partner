@@ -9,6 +9,7 @@ import Reading from './pages/Reading'
 import Converse from './pages/Converse'
 import { api } from './api'
 import { LevelContext, JLPT_LEVELS } from './context/LevelContext'
+import { FeaturesContext } from './context/FeaturesContext'
 
 const navItems = [
   { to: '/', icon: BarChart3, label: 'Dashboard' },
@@ -35,6 +36,7 @@ function App() {
   const [jlptLevel, setJlptLevelState] = useState(() => {
     return localStorage.getItem('jlpt-level') || 'N3'
   })
+  const [features, setFeatures] = useState({ whisperEnabled: true })
 
   useEffect(() => {
     const s = JP_SIZES[sizeIdx]
@@ -52,6 +54,10 @@ function App() {
         localStorage.setItem('jlpt-level', s.jlpt_level)
       }
     }).catch(() => {})
+    api.getFeatures().then((f) => {
+      if (cancelled) return
+      setFeatures({ whisperEnabled: f.whisper_enabled })
+    }).catch(() => {})
     return () => { cancelled = true }
   }, [])
 
@@ -63,6 +69,7 @@ function App() {
   }
 
   return (
+    <FeaturesContext.Provider value={features}>
     <LevelContext.Provider value={{ jlptLevel, setJlptLevel }}>
     <div className="min-h-screen flex flex-col">
       {/* Header */}
@@ -191,6 +198,7 @@ function App() {
       </main>
     </div>
     </LevelContext.Provider>
+    </FeaturesContext.Provider>
   )
 }
 

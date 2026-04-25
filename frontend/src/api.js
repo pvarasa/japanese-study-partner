@@ -69,6 +69,9 @@ export const api = {
   generateReading: (prompt) =>
     request('/generate/reading', { method: 'POST', body: form({ prompt }) }),
 
+  // Features
+  getFeatures: () => request('/features'),
+
   // Settings
   getSettings: () => request('/settings/'),
   updateSettings: (data) => request('/settings/', { method: 'PUT', body: data }),
