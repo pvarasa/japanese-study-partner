@@ -1,5 +1,6 @@
 """Simple spaced repetition logic."""
 from datetime import datetime, timedelta, timezone
+
 from .models import Item
 
 MIN_INTERVAL = 0.00694   # ~10 minutes in fractional days

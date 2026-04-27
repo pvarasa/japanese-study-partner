@@ -1,15 +1,17 @@
 import os
 import random
-from fastapi import APIRouter, Depends, Form, HTTPException
 from typing import Optional
-from sqlalchemy.orm import Session
+
 from anthropic import Anthropic
+from fastapi import APIRouter, Depends, Form, HTTPException
+from sqlalchemy.orm import Session
+
 from ..database import get_db
 from ..deps import get_user_id
 from ..llm import parse_json_response
 from ..models import Item
-from ..schemas import StudyQuestion, ReadingPassage, ReadingWord, ExampleSentence
-from .settings import get_jlpt_level, LEVEL_DESCRIPTOR, READING_LENGTH, NEW_WORD_TIER
+from ..schemas import ExampleSentence, ReadingPassage, ReadingWord, StudyQuestion
+from .settings import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 

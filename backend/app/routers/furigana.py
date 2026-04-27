@@ -1,9 +1,11 @@
 import os
 import unicodedata
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+
 import fugashi
 from anthropic import Anthropic
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from ..llm import parse_json_response
 
 router = APIRouter(prefix="/api/furigana", tags=["furigana"])

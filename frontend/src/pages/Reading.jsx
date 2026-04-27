@@ -46,7 +46,7 @@ export default function Reading() {
         tags: ['from-reading'],
       })
       setSavedWords(prev => new Set([...prev, word.japanese]))
-    } catch (err) {
+    } catch {
       // ignore duplicates
       setSavedWords(prev => new Set([...prev, word.japanese]))
     }

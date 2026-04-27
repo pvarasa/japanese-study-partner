@@ -1,14 +1,16 @@
 import os
 import random
+
+from anthropic import Anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from anthropic import Anthropic
+
 from ..database import get_db
 from ..deps import get_user_id
 from ..llm import parse_json_response
 from ..models import Item
-from .settings import get_jlpt_level, LEVEL_DESCRIPTOR
+from .settings import LEVEL_DESCRIPTOR, get_jlpt_level
 
 router = APIRouter(prefix="/api/converse", tags=["converse"])
 

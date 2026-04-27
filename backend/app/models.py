@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, Table
-from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Table, Text
+from sqlalchemy.orm import relationship
+
 from .database import Base
 
 # Many-to-many: items can have multiple tags

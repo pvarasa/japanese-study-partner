@@ -1,16 +1,18 @@
 import json
 import os
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
-from sqlalchemy.orm import Session
+
 import httpx
 from anthropic import Anthropic
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
 from ..database import get_db
 from ..deps import get_user_id
 from ..llm import parse_json_response
 from ..models import Item, Source
-from ..schemas import IngestResponse, IngestItem
+from ..schemas import IngestItem, IngestResponse
 from .items import _get_or_create_tags
-from .settings import get_jlpt_level, LEVEL_DESCRIPTOR
+from .settings import LEVEL_DESCRIPTOR, get_jlpt_level
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
@@ -105,8 +107,9 @@ async def ingest_pdf(
     db: Session = Depends(get_db),
 ):
     """Ingest content from a PDF."""
-    import pdfplumber
     import io
+
+    import pdfplumber
     content = await file.read()
     text_parts = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:

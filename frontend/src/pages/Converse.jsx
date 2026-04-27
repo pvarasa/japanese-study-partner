@@ -37,7 +37,7 @@ export default function Converse() {
     const turns = turnsRef.current
     if (id == null) return
     sessionIdRef.current = null
-    try { await api.endSession(id, turns, turns) } catch {}
+    try { await api.endSession(id, turns, turns) } catch { /* ignore */ }
   }
 
   useEffect(() => {

@@ -1,15 +1,19 @@
 from pathlib import Path
+
 from dotenv import load_dotenv
+
 # Load .env from project root (parent of backend/)
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from .database import engine, Base
-from .routers import items, study, ingest, generate, furigana, settings, transcribe, converse
+
+from .database import Base, engine
+from .routers import converse, furigana, generate, ingest, items, settings, study, transcribe
 from .routers.transcribe import whisper_enabled
-import os
 
 # SQLite only — PostgreSQL schema is managed by Alembic (run via entrypoint)
 if not os.environ.get("DATABASE_URL"):
