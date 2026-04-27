@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from anthropic import Anthropic
 from ..database import get_db
+from ..deps import get_user_id
 from ..llm import parse_json_response
 from ..models import Item
 from .settings import get_jlpt_level, LEVEL_DESCRIPTOR
@@ -89,9 +90,12 @@ def _client() -> Anthropic:
 
 
 @router.post("/start", response_model=StartOut)
-def start_conversation(db: Session = Depends(get_db)):
-    level = get_jlpt_level(db)
-    items = db.query(Item).all()
+def start_conversation(
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    level = get_jlpt_level(db, user_id)
+    items = db.query(Item).filter(Item.user_id == user_id).all()
     sample = random.sample(items, min(len(items), 8)) if items else []
     library_words = "\n".join(
         f"- {it.japanese} ({it.reading}): {it.meaning}" for it in sample
@@ -118,8 +122,12 @@ def start_conversation(db: Session = Depends(get_db)):
 
 
 @router.post("/reply", response_model=ReplyOut)
-def reply(data: ReplyIn, db: Session = Depends(get_db)):
-    level = get_jlpt_level(db)
+def reply(
+    data: ReplyIn,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    level = get_jlpt_level(db, user_id)
 
     if not data.user_text.strip():
         raise HTTPException(400, "Empty user response")

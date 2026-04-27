@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 import httpx
 from anthropic import Anthropic
 from ..database import get_db
+from ..deps import get_user_id
 from ..llm import parse_json_response
 from ..models import Item, Source
 from ..schemas import IngestResponse, IngestItem
@@ -69,9 +70,13 @@ def _extract_with_llm(text: str, level: str) -> dict:
 
 
 @router.post("/text", response_model=IngestResponse)
-async def ingest_text(content: str = Form(...), db: Session = Depends(get_db)):
+async def ingest_text(
+    content: str = Form(...),
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
     """Ingest raw Japanese text."""
-    result = _extract_with_llm(content, get_jlpt_level(db))
+    result = _extract_with_llm(content, get_jlpt_level(db, user_id))
     return IngestResponse(
         source_title=result.get("title", "Text input"),
         items=[IngestItem(**item) for item in result.get("items", [])],
@@ -79,10 +84,14 @@ async def ingest_text(content: str = Form(...), db: Session = Depends(get_db)):
 
 
 @router.post("/url", response_model=IngestResponse)
-async def ingest_url(url: str = Form(...), db: Session = Depends(get_db)):
+async def ingest_url(
+    url: str = Form(...),
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
     """Ingest content from a URL."""
     text = await _fetch_url(url)
-    result = _extract_with_llm(text, get_jlpt_level(db))
+    result = _extract_with_llm(text, get_jlpt_level(db, user_id))
     return IngestResponse(
         source_title=result.get("title", url),
         items=[IngestItem(**item) for item in result.get("items", [])],
@@ -90,7 +99,11 @@ async def ingest_url(url: str = Form(...), db: Session = Depends(get_db)):
 
 
 @router.post("/pdf", response_model=IngestResponse)
-async def ingest_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def ingest_pdf(
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
     """Ingest content from a PDF."""
     import pdfplumber
     import io
@@ -100,7 +113,7 @@ async def ingest_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)
         for page in pdf.pages[:20]:  # limit to 20 pages
             text_parts.append(page.extract_text() or "")
     text = "\n".join(text_parts)
-    result = _extract_with_llm(text, get_jlpt_level(db))
+    result = _extract_with_llm(text, get_jlpt_level(db, user_id))
     return IngestResponse(
         source_title=result.get("title", file.filename or "PDF"),
         items=[IngestItem(**item) for item in result.get("items", [])],
@@ -113,10 +126,11 @@ async def save_ingested(
     source_type: str = Form(...),
     source_url: str = Form(None),
     items_json: str = Form(...),
+    user_id: str = Depends(get_user_id),
     db: Session = Depends(get_db),
 ):
     """Save reviewed/edited ingested items to the database."""
-    source = Source(title=source_title, type=source_type, url=source_url)
+    source = Source(user_id=user_id, title=source_title, type=source_type, url=source_url)
     db.add(source)
     db.flush()
 
@@ -124,7 +138,7 @@ async def save_ingested(
     saved = []
     for item_data in items_data:
         tags = _get_or_create_tags(db, item_data.pop("tags", []))
-        item = Item(source_id=source.id, **item_data)
+        item = Item(user_id=user_id, source_id=source.id, **item_data)
         item.tags = tags
         db.add(item)
         saved.append(item)

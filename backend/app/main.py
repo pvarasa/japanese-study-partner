@@ -11,7 +11,9 @@ from .routers import items, study, ingest, generate, furigana, settings, transcr
 from .routers.transcribe import whisper_enabled
 import os
 
-Base.metadata.create_all(bind=engine)
+# SQLite only — PostgreSQL schema is managed by Alembic (run via entrypoint)
+if not os.environ.get("DATABASE_URL"):
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="日本語 Study Partner", version="0.1.0")
 

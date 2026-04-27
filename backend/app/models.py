@@ -17,6 +17,7 @@ class Item(Base):
     __tablename__ = "items"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(String(100), nullable=False, index=True)
     type = Column(String(20), nullable=False, index=True)  # word, grammar, expression
     japanese = Column(Text, nullable=False)
     reading = Column(Text)  # hiragana reading
@@ -52,6 +53,7 @@ class Source(Base):
     __tablename__ = "sources"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(String(100), nullable=False, index=True)
     title = Column(String(500))
     type = Column(String(20))  # url, pdf, text, manual
     url = Column(Text)
@@ -62,9 +64,10 @@ class Source(Base):
 
 
 class Setting(Base):
-    """Simple key/value app settings (e.g. jlpt_level)."""
+    """Simple key/value app settings (e.g. jlpt_level), keyed per user."""
     __tablename__ = "settings"
 
+    user_id = Column(String(100), primary_key=True)
     key = Column(String(50), primary_key=True)
     value = Column(Text)
 
@@ -74,6 +77,7 @@ class StudySession(Base):
     __tablename__ = "study_sessions"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(String(100), nullable=False, index=True)
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at = Column(DateTime)
     items_reviewed = Column(Integer, default=0)

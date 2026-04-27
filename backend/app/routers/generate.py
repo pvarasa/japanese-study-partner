@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from anthropic import Anthropic
 from ..database import get_db
+from ..deps import get_user_id
 from ..llm import parse_json_response
 from ..models import Item
 from ..schemas import StudyQuestion, ReadingPassage, ReadingWord, ExampleSentence
@@ -38,8 +39,13 @@ Return ONLY valid JSON."""
 
 
 @router.post("/question", response_model=StudyQuestion)
-def generate_question(item_id: int, mode: str, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
+def generate_question(
+    item_id: int,
+    mode: str,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
     if not item:
         raise HTTPException(404, "Item not found")
 
@@ -47,7 +53,7 @@ def generate_question(item_id: int, mode: str, db: Session = Depends(get_db)):
     if not api_key:
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
 
-    level = get_jlpt_level(db)
+    level = get_jlpt_level(db, user_id)
     client = Anthropic(api_key=api_key)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -102,8 +108,12 @@ Return ONLY valid JSON."""
 
 
 @router.post("/example-sentence", response_model=ExampleSentence)
-def generate_example_sentence(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
+def generate_example_sentence(
+    item_id: int,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
     if not item:
         raise HTTPException(404, "Item not found")
 
@@ -111,7 +121,7 @@ def generate_example_sentence(item_id: int, db: Session = Depends(get_db)):
     if not api_key:
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
 
-    level = get_jlpt_level(db)
+    level = get_jlpt_level(db, user_id)
     client = Anthropic(api_key=api_key)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -164,9 +174,10 @@ Return ONLY valid JSON, no markdown fences."""
 @router.post("/reading", response_model=ReadingPassage)
 def generate_reading(
     prompt: Optional[str] = Form(None),
+    user_id: str = Depends(get_user_id),
     db: Session = Depends(get_db),
 ):
-    items = db.query(Item).all()
+    items = db.query(Item).filter(Item.user_id == user_id).all()
     if not items:
         raise HTTPException(400, "No items in library yet")
 
@@ -184,7 +195,7 @@ def generate_reading(
     if not api_key:
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
 
-    level = get_jlpt_level(db)
+    level = get_jlpt_level(db, user_id)
     client = Anthropic(api_key=api_key)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
