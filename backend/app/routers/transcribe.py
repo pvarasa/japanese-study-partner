@@ -47,9 +47,16 @@ class TranscribeOut(BaseModel):
     duration: float
 
 
+def whisper_enabled() -> bool:
+    return os.environ.get("WHISPER_ENABLED", "true").lower() not in ("false", "0", "no")
+
+
 @router.post("", response_model=TranscribeOut)
 @router.post("/", response_model=TranscribeOut)
 async def transcribe(audio: UploadFile = File(...)):
+    if not whisper_enabled():
+        raise HTTPException(503, "Speech-to-text is not available in this deployment")
+
     data = await audio.read()
     if not data:
         raise HTTPException(400, "Empty audio upload")

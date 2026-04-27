@@ -3,10 +3,12 @@ import { Mic, Square, Loader2, Send, RefreshCw, CheckCircle, MessagesSquare, Arr
 import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
+import { useFeatures } from '../context/FeaturesContext'
 
 const MAX_RECORD_MS = 30_000
 
 export default function Converse() {
+  const { whisperEnabled } = useFeatures()
   const [starting, setStarting] = useState(false)
   const [topic, setTopic] = useState(null)
   const [question, setQuestion] = useState(null)
@@ -194,29 +196,31 @@ export default function Converse() {
           <textarea
             value={userText}
             onChange={(e) => setUserText(e.target.value)}
-            placeholder="日本語で答えてください… (type or use the mic)"
+            placeholder={whisperEnabled ? '日本語で答えてください… (type or use the mic)' : '日本語で答えてください…'}
             rows={5}
             className="jp-text w-full bg-gray-800 border border-gray-800 rounded-lg px-3 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-indigo-500"
             disabled={submitting}
           />
 
           <div className="flex items-center gap-2 flex-wrap">
-            {!recording ? (
-              <button
-                onClick={startRecording}
-                disabled={transcribing || submitting}
-                className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 px-3 py-2 rounded-lg text-sm"
-              >
-                {transcribing ? <Loader2 className="animate-spin" size={16} /> : <Mic size={16} />}
-                {transcribing ? 'Transcribing…' : 'Record'}
-              </button>
-            ) : (
-              <button
-                onClick={stopRecording}
-                className="inline-flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-2 rounded-lg text-sm"
-              >
-                <Square size={16} /> Stop
-              </button>
+            {whisperEnabled && (
+              !recording ? (
+                <button
+                  onClick={startRecording}
+                  disabled={transcribing || submitting}
+                  className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 px-3 py-2 rounded-lg text-sm"
+                >
+                  {transcribing ? <Loader2 className="animate-spin" size={16} /> : <Mic size={16} />}
+                  {transcribing ? 'Transcribing…' : 'Record'}
+                </button>
+              ) : (
+                <button
+                  onClick={stopRecording}
+                  className="inline-flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 px-3 py-2 rounded-lg text-sm"
+                >
+                  <Square size={16} /> Stop
+                </button>
+              )
             )}
 
             <button
@@ -229,7 +233,7 @@ export default function Converse() {
             </button>
           </div>
 
-          {micError && <div className="text-sm text-red-400">{micError}</div>}
+          {whisperEnabled && micError && <div className="text-sm text-red-400">{micError}</div>}
           {error && <div className="text-sm text-red-400">{error}</div>}
           {recording && <div className="text-xs text-gray-500">Recording… (max 30s)</div>}
         </div>

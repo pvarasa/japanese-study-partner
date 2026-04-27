@@ -1,0 +1,27 @@
+# Python
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/**/*.pyc
+backend/nihongo.db
+
+# Node
+frontend/node_modules
+frontend/dist
+
+# Dev/local files
+.env
+.env.*
+!.env.example
+*.ps1
+start.sh
+stop.sh
+
+# Git
+.git
+.gitignore
+
+# Docs
+docs/
+README.md
+CLAUDE.md

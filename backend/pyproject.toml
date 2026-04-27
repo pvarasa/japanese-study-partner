@@ -1,7 +1,7 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "日本語 Study Partner — FastAPI backend"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.89.0",
@@ -16,6 +16,12 @@ dependencies = [
     "sqlalchemy>=2.0.49",
     "unidic-lite>=1.0.8",
     "uvicorn>=0.43.0",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "alembic>=1.13",
+    "psycopg2-binary>=2.9",
 ]
 
 [dependency-groups]

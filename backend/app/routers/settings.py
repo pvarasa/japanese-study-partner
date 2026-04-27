@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
+from ..deps import get_user_id
 from ..models import Setting
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -45,8 +46,10 @@ class SettingsUpdate(BaseModel):
     jlpt_level: str | None = None
 
 
-def get_jlpt_level(db: Session) -> str:
-    row = db.query(Setting).filter(Setting.key == "jlpt_level").first()
+def get_jlpt_level(db: Session, user_id: str = "default") -> str:
+    row = db.query(Setting).filter(
+        Setting.user_id == user_id, Setting.key == "jlpt_level"
+    ).first()
     if row and row.value in VALID_LEVELS:
         return row.value
     return DEFAULT_LEVEL
@@ -54,21 +57,30 @@ def get_jlpt_level(db: Session) -> str:
 
 @router.get("", response_model=SettingsOut)
 @router.get("/", response_model=SettingsOut)
-def read_settings(db: Session = Depends(get_db)):
-    return SettingsOut(jlpt_level=get_jlpt_level(db))
+def read_settings(
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    return SettingsOut(jlpt_level=get_jlpt_level(db, user_id))
 
 
 @router.put("", response_model=SettingsOut)
 @router.put("/", response_model=SettingsOut)
-def update_settings(data: SettingsUpdate, db: Session = Depends(get_db)):
+def update_settings(
+    data: SettingsUpdate,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
     if data.jlpt_level is not None:
         level = data.jlpt_level.upper()
         if level not in VALID_LEVELS:
             raise HTTPException(400, f"Invalid JLPT level: {data.jlpt_level}")
-        row = db.query(Setting).filter(Setting.key == "jlpt_level").first()
+        row = db.query(Setting).filter(
+            Setting.user_id == user_id, Setting.key == "jlpt_level"
+        ).first()
         if row:
             row.value = level
         else:
-            db.add(Setting(key="jlpt_level", value=level))
+            db.add(Setting(user_id=user_id, key="jlpt_level", value=level))
         db.commit()
-    return SettingsOut(jlpt_level=get_jlpt_level(db))
+    return SettingsOut(jlpt_level=get_jlpt_level(db, user_id))

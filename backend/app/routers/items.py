@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from ..database import get_db
+from ..deps import get_user_id
 from ..models import Item, Tag
 from ..schemas import ItemCreate, ItemUpdate, ItemOut
-import json
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -52,9 +52,10 @@ def list_items(
     tag: str | None = None,
     limit: int = Query(default=100, le=500),
     offset: int = 0,
+    user_id: str = Depends(get_user_id),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Item)
+    q = db.query(Item).filter(Item.user_id == user_id)
     if type:
         q = q.filter(Item.type == type)
     if search:
@@ -72,8 +73,13 @@ def list_items(
 
 
 @router.post("/", response_model=ItemOut)
-def create_item(data: ItemCreate, db: Session = Depends(get_db)):
+def create_item(
+    data: ItemCreate,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
     item = Item(
+        user_id=user_id,
         type=data.type,
         japanese=data.japanese,
         reading=data.reading,
@@ -92,16 +98,25 @@ def create_item(data: ItemCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{item_id}", response_model=ItemOut)
-def get_item(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
+def get_item(
+    item_id: int,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
     if not item:
         raise HTTPException(404, "Item not found")
     return _item_to_out(item)
 
 
 @router.put("/{item_id}", response_model=ItemOut)
-def update_item(item_id: int, data: ItemUpdate, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
+def update_item(
+    item_id: int,
+    data: ItemUpdate,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
     if not item:
         raise HTTPException(404, "Item not found")
     for field, value in data.model_dump(exclude_unset=True).items():
@@ -115,8 +130,12 @@ def update_item(item_id: int, data: ItemUpdate, db: Session = Depends(get_db)):
 
 
 @router.delete("/{item_id}")
-def delete_item(item_id: int, db: Session = Depends(get_db)):
-    item = db.query(Item).filter(Item.id == item_id).first()
+def delete_item(
+    item_id: int,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
     if not item:
         raise HTTPException(404, "Item not found")
     db.delete(item)

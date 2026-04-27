@@ -6,12 +6,14 @@ A personal Japanese language learning app with spaced repetition, AI-powered con
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Python 3.11+, FastAPI, SQLAlchemy, SQLite |
+| Backend | Python 3.11+, FastAPI, SQLAlchemy |
+| Database | SQLite (default, zero-config) or PostgreSQL (via `DATABASE_URL`) |
 | Frontend | React 19, Vite 8, Tailwind CSS 4 |
 | AI | Anthropic Claude API (Sonnet 4) |
 | JP Parsing | fugashi + unidic-lite |
 | Speech-to-text | faster-whisper (CTranslate2) — local, Japanese-tuned Kotoba-Whisper by default |
 | Package Mgmt | uv (Python), npm (JS) |
+| Containerisation | Docker + Docker Compose |
 
 ## Project Structure
 
@@ -19,26 +21,35 @@ A personal Japanese language learning app with spaced repetition, AI-powered con
 jp_study_partner/
 ├── .env                          # ANTHROPIC_API_KEY (create from .env.example)
 ├── .env.example
-├── start.sh / start.ps1          # Start both servers (bash / PowerShell)
+├── Dockerfile                    # Multi-stage build: Node (frontend) + Python (backend)
+├── docker-compose.yml            # App + PostgreSQL for containerised deployment
+├── .dockerignore
+├── start.sh / start.ps1          # Start both dev servers (bash / PowerShell)
 ├── stop.sh  / stop.ps1           # Stop both servers (frees ports 8000 & 5173)
 ├── docs/screenshots/             # README screenshots
 │
 ├── backend/
-│   ├── pyproject.toml            # Python deps (managed by uv); pytest in the `dev` group
-│   ├── nihongo.db                # SQLite database (created at runtime)
+│   ├── pyproject.toml            # Python deps (uv); postgres extra; pytest in dev group
+│   ├── alembic.ini               # Alembic config (URL comes from app engine at runtime)
+│   ├── entrypoint.sh             # Docker entrypoint: runs Alembic then starts uvicorn
+│   ├── nihongo.db                # SQLite database (created at runtime; not used with PostgreSQL)
+│   ├── alembic/
+│   │   ├── env.py                # Alembic env: uses app.database.engine directly
+│   │   └── versions/             # Migration scripts
 │   ├── tests/                    # pytest suite: srs, llm parser, non-AI API smoke
 │   └── app/
-│       ├── main.py               # FastAPI app, CORS, static file serving
-│       ├── database.py           # SQLAlchemy engine & session config
+│       ├── main.py               # FastAPI app, CORS, static file serving, /api/features
+│       ├── database.py           # SQLAlchemy engine: PostgreSQL if DATABASE_URL set, else SQLite
 │       ├── models.py             # ORM models: Item, Tag, Source, Setting, StudySession
 │       ├── schemas.py            # Pydantic request/response schemas
 │       ├── srs.py                # Spaced repetition algorithm
 │       ├── llm.py                # Shared helper for parsing JSON out of Claude responses
+│       ├── deps.py               # FastAPI dependencies (get_user_id from X-User-ID header)
 │       └── routers/
 │           ├── items.py          # CRUD for study items
 │           ├── study.py          # Due items, reviews, sessions, dashboard
 │           ├── ingest.py         # Text/URL/PDF ingestion via Claude API
-│           ├── generate.py       # AI question generation for drills & reading
+│           ├── generate.py       # AI question/example-sentence generation & reading passages
 │           ├── furigana.py       # Furigana annotation via fugashi tokenizer
 │           ├── settings.py       # JLPT level setting + per-level prompt tuning
 │           ├── transcribe.py     # Local Whisper (faster-whisper) audio → text
@@ -53,7 +64,8 @@ jp_study_partner/
         ├── api.js                # API client (all fetch calls)
         ├── index.css             # Tailwind imports, dark theme, JP fonts, ruby + skeleton styling
         ├── context/
-        │   └── LevelContext.jsx  # React context for the sticky JLPT level
+        │   ├── LevelContext.jsx  # React context for the sticky JLPT level
+        │   └── FeaturesContext.jsx # React context for server feature flags (e.g. whisperEnabled)
         ├── components/
         │   ├── Ruby.jsx          # Furigana component (batched, cached kanji annotations)
         │   ├── ReadingText.jsx   # Tokenized passage with per-word click-to-lookup popovers
@@ -62,7 +74,7 @@ jp_study_partner/
         └── pages/
             ├── Dashboard.jsx     # Stats, due items, weak areas, streak
             ├── Items.jsx         # Library: search, filter, inline edit, delete
-            ├── Study.jsx         # Flashcards & AI-generated drills with SRS
+            ├── Study.jsx         # Flashcards & AI-generated drills with SRS; example-sentence button
             ├── Reading.jsx       # AI reading practice with library + new vocabulary
             ├── Converse.jsx      # Conversation mode: tutor prompts, typed/spoken replies, corrections
             └── Ingest.jsx        # Import content via text/URL/PDF + AI extraction
@@ -76,6 +88,7 @@ The core study unit. Can be a **word**, **grammar** point, or **expression**.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | int PK | |
+| user_id | string | Owner (from `X-User-ID` header; `"default"` for single-user) |
 | type | string | `word`, `grammar`, or `expression` |
 | japanese | text | The Japanese text |
 | reading | text | Hiragana reading |
@@ -92,16 +105,26 @@ The core study unit. Can be a **word**, **grammar** point, or **expression**.
 | srs_correct | int | Correct answer count |
 
 ### Tag
-Many-to-many with Item via `item_tags` join table.
+Many-to-many with Item via `item_tags` join table. Tags are global (shared label names across users).
 
 ### Source
-Where study material came from. Fields: `title`, `type` (url/pdf/text/manual), `url`, `content`, `created_at`. Has many Items.
+Where study material came from. Fields: `user_id`, `title`, `type` (url/pdf/text/manual), `url`, `content`, `created_at`. Has many Items.
 
 ### Setting
-Key/value app settings. Currently stores `jlpt_level` (N1–N5, default N3).
+Per-user key/value settings. Composite PK `(user_id, key)`. Currently stores `jlpt_level` (N1–N5, default N3).
 
 ### StudySession
-Tracks study sessions. Fields: `started_at`, `ended_at`, `items_reviewed`, `items_correct`, `mode` (one of `flashcard_jp`, `flashcard_en`, `fill_blank`, `sentence_build`, `converse`).
+Tracks study sessions. Fields: `user_id`, `started_at`, `ended_at`, `items_reviewed`, `items_correct`, `mode` (one of `flashcard_jp`, `flashcard_en`, `fill_blank`, `sentence_build`, `converse`).
+
+## Multi-User Support
+
+All data-bearing endpoints are scoped to a user via the `X-User-ID` request header. If the header is absent the user is `"default"`, which preserves single-user SQLite behaviour without any configuration.
+
+```
+X-User-ID: alice
+```
+
+Items, sources, settings, and study sessions are all isolated per user. Tags are global (shared label names). The frontend currently omits the header (uses `"default"`); to support multiple users, set the header in `frontend/src/api.js`'s `request()` helper.
 
 ## API Endpoints
 
@@ -136,7 +159,8 @@ Base URL: `http://localhost:8000/api`
 ### Generate (`/api/generate`)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/generate/question` | AI-generated question. Query: `item_id`, `mode` (`fill_blank`/`sentence_build`/`grammar_drill`) |
+| POST | `/generate/question` | AI-generated drill question. Query: `item_id`, `mode` (`fill_blank`/`sentence_build`/`grammar_drill`) |
+| POST | `/generate/example-sentence` | Generate a fresh example sentence for an item. Query: `item_id`. Returns `{japanese, english}`. Each call produces a different sentence. |
 | POST | `/generate/reading` | Generate reading passage using library words + new vocabulary. Form: `prompt` (optional topic guidance) |
 
 ### Furigana (`/api/furigana`)
@@ -155,7 +179,12 @@ Base URL: `http://localhost:8000/api`
 ### Transcribe (`/api/transcribe`)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/transcribe/` | Transcribe an audio upload (multipart `audio`) to Japanese text. Uses local faster-whisper. First call lazy-loads the model (slow on first run). |
+| POST | `/transcribe/` | Transcribe an audio upload (multipart `audio`) to Japanese text. Uses local faster-whisper. First call lazy-loads the model (slow on first run). Returns 503 if `WHISPER_ENABLED=false`. |
+
+### Features (`/api/features`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/features` | Returns server feature flags. Currently: `{whisper_enabled: bool}`. Read by the frontend on mount to adapt the UI. |
 
 ### Converse (`/api/converse`)
 | Method | Path | Description |
@@ -182,7 +211,7 @@ Ease factor is clamped to [1.3, 3.0]. Items are due when `srs_due <= now`, order
 3. **Fill in the Blank** - AI generates a sentence with the target word blanked out, 4 multiple-choice options
 4. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input)
 
-Modes 1–4 use SRS rating after each card.
+Modes 1–4 use SRS rating after each card. Flashcard modes (1–2) include a **Generate example** button on reveal that calls `/generate/example-sentence` to produce a fresh AI-generated sentence with translation; press it multiple times for variety.
 
 5. **Reading Practice** - AI generates a short passage using words from your library + new vocabulary. Accepts optional topic prompt. Shows furigana, toggleable translation, and word list. New words can be added to library with one click.
 6. **Conversation** - Open-ended Japanese Q&A. The tutor asks a level-appropriate question; you reply by typing or by recording audio (local Whisper transcription). Returns inline corrections, a natural rewrite of your answer, short feedback, and a follow-up question. Each submitted turn is logged to the study session.
@@ -242,6 +271,20 @@ cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 The backend serves the built frontend from `frontend/dist/` automatically.
 
+### Docker (with PostgreSQL)
+```bash
+# Copy and fill in at minimum ANTHROPIC_API_KEY
+cp .env.example .env
+
+# Build and start (app + PostgreSQL)
+docker compose up --build
+
+# App is available at http://localhost:8000
+# Migrations run automatically on startup via entrypoint.sh
+```
+
+The Docker image sets `WHISPER_ENABLED=false` by default. To enable speech-to-text, set `WHISPER_ENABLED=true` and mount a volume at `/root/.cache/huggingface` so the model persists across restarts.
+
 ### Access via Tailscale
 Use `--host 0.0.0.0` (already set in the start scripts) to bind to all interfaces, then access via your Tailscale IP.
 
@@ -252,11 +295,13 @@ All loaded from `.env` at the project root via `python-dotenv`. See `.env.exampl
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | Yes (for Import, AI study, Reading, Converse) | — | Claude API key |
+| `DATABASE_URL` | No | — (uses SQLite) | PostgreSQL connection string, e.g. `postgresql+psycopg2://user:pass@host/dbname`. When set, SQLite is not used and Alembic runs migrations on startup. |
+| `WHISPER_ENABLED` | No | `true` | Set to `false` to disable speech-to-text entirely. The `/transcribe/` endpoint returns 503 and the mic controls are hidden in the UI. Default is `false` in the Docker image. |
 | `WHISPER_MODEL` | No | `kotoba-tech/kotoba-whisper-v2.0-faster` | faster-whisper model name or HF repo. Alternatives: `large-v3-turbo`, `large-v3`, `medium`, `small` |
 | `WHISPER_DEVICE` | No | `auto` | `auto` / `cuda` / `cpu`. `auto` picks CUDA if available |
 | `WHISPER_COMPUTE_TYPE` | No | `auto` | `auto` / `float16` / `int8_float16` / `int8` / `float32`. `auto` picks `float16` on GPU, `int8` on CPU |
 
-The Kotoba-Whisper default is a Japanese-fine-tuned Whisper variant (~1.5 GB). It downloads to the Hugging Face cache on first transcription call.
+The Kotoba-Whisper default is a Japanese-fine-tuned Whisper variant (~1.5 GB). It downloads to the Hugging Face cache on first transcription call. Not downloaded when `WHISPER_ENABLED=false`.
 
 ## Data Flow
 
@@ -271,7 +316,7 @@ Select mode -> `POST /study/session/start` -> `GET /study/due` (up to 20 items) 
 
 ## Design Decisions
 
-- **SQLite** over Postgres: single-user local app, zero setup, easy backup (copy the .db file)
+- **SQLite by default**: single-user local app, zero setup, easy backup (copy the .db file). PostgreSQL is supported via `DATABASE_URL` for Docker/K8s deployments; schema is managed by Alembic in that path.
 - **No auth**: personal tool, secured at network level (Tailscale)
 - **Claude Sonnet for ingestion/generation**: balances cost and quality across JLPT levels
 - **Simple SRS over SM-2**: three buttons instead of five, easier to use, good enough for personal use

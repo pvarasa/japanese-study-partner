@@ -8,9 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .database import engine, Base
 from .routers import items, study, ingest, generate, furigana, settings, transcribe, converse
+from .routers.transcribe import whisper_enabled
 import os
 
-Base.metadata.create_all(bind=engine)
+# SQLite only — PostgreSQL schema is managed by Alembic (run via entrypoint)
+if not os.environ.get("DATABASE_URL"):
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="日本語 Study Partner", version="0.1.0")
 
@@ -34,6 +37,11 @@ app.include_router(converse.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/features")
+def features():
+    return {"whisper_enabled": whisper_enabled()}
 
 
 # Serve frontend static files in production

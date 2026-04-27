@@ -2,7 +2,8 @@
 from datetime import datetime, timedelta, timezone
 
 from app.models import Item
-from app.srs import MIN_INTERVAL, process_review
+import pytest
+from app.srs import HARD_INTERVAL, MIN_INTERVAL, process_review
 
 
 def _new_item(interval: float = 0.0, ease: float = 2.5, reviews: int = 0, correct: int = 0) -> Item:
@@ -30,7 +31,7 @@ def test_again_resets_and_drops_ease():
 def test_hard_on_new_item_jumps_to_one_hour():
     item = _new_item(interval=0.0)
     process_review(item, "hard")
-    assert item.srs_interval == 0.0416
+    assert item.srs_interval == HARD_INTERVAL
     assert item.srs_correct == 1
 
 
@@ -77,3 +78,9 @@ def test_srs_due_follows_interval():
     delta = item.srs_due - before
     # "good" on a new item → 1 day interval
     assert timedelta(hours=23) < delta < timedelta(hours=25)
+
+
+def test_unknown_rating_raises():
+    item = _new_item()
+    with pytest.raises(ValueError, match="Unknown SRS rating"):
+        process_review(item, "excellent")

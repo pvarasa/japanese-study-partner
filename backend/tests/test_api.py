@@ -159,3 +159,72 @@ def test_session_start_and_end(client):
 def test_end_unknown_session_404(client):
     r = client.post("/api/study/session/99999/end?items_reviewed=0&items_correct=0")
     assert r.status_code == 404
+
+
+def test_review_invalid_rating_rejected(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    r = client.post("/api/study/review", json={"item_id": item["id"], "rating": "excellent"})
+    assert r.status_code == 422
+
+
+# ---- Tag filtering ----------------------------------------------------------
+
+def test_items_filter_by_tag(client):
+    client.post("/api/items/", json=_make_item(japanese="食べる", meaning="to eat", tags=["verb"]))
+    client.post("/api/items/", json=_make_item(japanese="速い", meaning="fast", tags=["adjective"]))
+    r = client.get("/api/items/?tag=verb")
+    assert r.status_code == 200
+    results = r.json()
+    assert len(results) == 1
+    assert results[0]["japanese"] == "食べる"
+
+
+# ---- Multi-user isolation ---------------------------------------------------
+
+def test_user_isolation_items(client):
+    # alice creates an item
+    client.post("/api/items/", json=_make_item(japanese="猫", meaning="cat"),
+                headers={"X-User-ID": "alice"})
+
+    # bob sees nothing
+    bob_items = client.get("/api/items/", headers={"X-User-ID": "bob"}).json()
+    assert bob_items == []
+
+    # alice sees her item
+    alice_items = client.get("/api/items/", headers={"X-User-ID": "alice"}).json()
+    assert len(alice_items) == 1
+    assert alice_items[0]["japanese"] == "猫"
+
+
+def test_user_isolation_cross_access_404(client):
+    # alice creates an item
+    item = client.post("/api/items/", json=_make_item(),
+                       headers={"X-User-ID": "alice"}).json()
+
+    # bob cannot read, update, or delete it
+    assert client.get(f"/api/items/{item['id']}", headers={"X-User-ID": "bob"}).status_code == 404
+    assert client.put(f"/api/items/{item['id']}", json={"meaning": "x"},
+                      headers={"X-User-ID": "bob"}).status_code == 404
+    assert client.delete(f"/api/items/{item['id']}",
+                         headers={"X-User-ID": "bob"}).status_code == 404
+
+
+def test_user_isolation_settings(client):
+    # alice sets N1
+    client.put("/api/settings/", json={"jlpt_level": "N1"}, headers={"X-User-ID": "alice"})
+
+    # bob still sees the default N3
+    assert client.get("/api/settings/", headers={"X-User-ID": "bob"}).json() == {"jlpt_level": "N3"}
+
+    # alice still sees N1
+    assert client.get("/api/settings/", headers={"X-User-ID": "alice"}).json() == {"jlpt_level": "N1"}
+
+
+def test_user_isolation_dashboard(client):
+    client.post("/api/items/", json=_make_item(), headers={"X-User-ID": "alice"})
+
+    alice_dash = client.get("/api/study/dashboard", headers={"X-User-ID": "alice"}).json()
+    bob_dash = client.get("/api/study/dashboard", headers={"X-User-ID": "bob"}).json()
+
+    assert alice_dash["total_items"] == 1
+    assert bob_dash["total_items"] == 0

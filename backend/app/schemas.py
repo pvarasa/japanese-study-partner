@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 
 class ItemCreate(BaseModel):
@@ -48,7 +48,7 @@ class ItemOut(BaseModel):
 
 class SRSReview(BaseModel):
     item_id: int
-    rating: str  # again, hard, good
+    rating: Literal["again", "hard", "good"]
 
 
 class IngestRequest(BaseModel):
