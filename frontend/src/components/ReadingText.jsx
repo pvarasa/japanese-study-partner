@@ -3,6 +3,20 @@ import { api } from '../api'
 
 const isJapanese = (s) => /[぀-ゟ゠-ヿ一-鿿]/.test(s || '')
 
+const SENTENCE_ENDERS = '。！？!?\n'
+
+function containingSentence(fullText, target) {
+  if (!fullText || !target) return target || ''
+  const idx = fullText.indexOf(target)
+  if (idx === -1) return target
+  let start = idx
+  while (start > 0 && !SENTENCE_ENDERS.includes(fullText[start - 1])) start--
+  let end = idx + target.length
+  while (end < fullText.length && !SENTENCE_ENDERS.includes(fullText[end])) end++
+  if (end < fullText.length) end++
+  return fullText.slice(start, end).trim()
+}
+
 function selectionTextSkippingRuby(sel, root) {
   if (!sel.rangeCount) return ''
   const range = sel.getRangeAt(0)
@@ -109,7 +123,7 @@ export default function ReadingText({ text, words = [], className = '' }) {
       })
 
       if (!cached) {
-        api.lookupWord(selText, '', text, true)
+        api.lookupWord(selText, '', containingSentence(text, selText), true)
           .then(r => {
             const entry = { meaning: r.meaning || '', reading: r.reading || '', error: false }
             setSelLookups(prev => ({ ...prev, [selText]: entry }))
@@ -134,7 +148,7 @@ export default function ReadingText({ text, words = [], className = '' }) {
     const key = t.lemma || t.surface
     if (!t.meaning && !lookups[key] && isJapanese(t.surface)) {
       setLookups(prev => ({ ...prev, [key]: { loading: true } }))
-      api.lookupWord(t.surface, t.lemma || '', text)
+      api.lookupWord(t.surface, t.lemma || '', containingSentence(text, t.surface))
         .then(r => setLookups(prev => ({ ...prev, [key]: { loading: false, meaning: r.meaning, reading: r.reading } })))
         .catch(err => setLookups(prev => ({ ...prev, [key]: { loading: false, meaning: err?.message || '', error: true } })))
     }
