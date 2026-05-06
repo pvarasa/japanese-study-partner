@@ -66,7 +66,8 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - `backend/app/routers/study.py` — Due items, review submission, dashboard stats, session tracking
 - `backend/app/routers/ingest.py` — Text/URL/PDF ingestion via Claude API extraction (JLPT-level-aware)
 - `backend/app/routers/generate.py` — AI question generation (fill_blank, sentence_build, grammar_drill), on-demand example sentences, and reading passages (JLPT-level-aware)
-- `backend/app/routers/furigana.py` — Furigana annotation endpoint using fugashi tokenizer
+- `backend/app/routers/furigana.py` — Furigana annotation endpoint using fugashi tokenizer; `lookup_word` delegates to `app.translation`
+- `backend/app/translation.py` — Pluggable JP→EN translation lookup; dispatches to Claude or a local Ollama server based on `TRANSLATION_PROVIDER`
 - `backend/app/routers/settings.py` — JLPT level setting + per-level prompt tuning (descriptor, reading length, new-word tier); exposes `get_jlpt_level(db, user_id)` used by ingest/generate/converse
 - `backend/app/routers/transcribe.py` — Local faster-whisper transcription; lazy singleton with auto device/compute-type detection; gated by `WHISPER_ENABLED` env var
 - `backend/app/routers/converse.py` — Conversation tutor: `/start` opens a level-appropriate question, `/reply` returns corrections + natural rewrite + follow-up
@@ -101,4 +102,5 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - JLPT level is persisted in the `settings` table (composite PK `user_id + key`); frontend also caches it in `localStorage` (`jlpt-level`) for instant load, then reconciles with the server on mount
 - `alembic.ini` has an empty `sqlalchemy.url` — the actual URL is derived from `app.database.engine` at runtime in `alembic/env.py`; do not hardcode it there
 - Multi-user: every data-bearing endpoint reads `X-User-ID` from the request header (default `"default"`); the frontend currently omits this header so all data lands under the `"default"` user. To wire up multi-user on the frontend, add the header in the `request()` helper in `frontend/src/api.js`
+- Translation provider for `/api/furigana/lookup` is selected at request time via `TRANSLATION_PROVIDER` (`anthropic` default, `ollama` for a local model). The in-process lookup cache key includes `(provider, model)`, so flipping the env var doesn't return stale results — but the cache is per-process, so it's wiped on restart
 - Dockerfile WORKDIR is `/app/backend` (not `/app`) so that `main.py`'s `../frontend/dist` path matches the same relative layout as local dev

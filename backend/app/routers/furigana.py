@@ -1,11 +1,10 @@
-import json
 import unicodedata
 
 import fugashi
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..llm import call_claude, get_anthropic_client, parse_json_response
+from ..translation import get_model, get_provider, translate_lookup
 
 router = APIRouter(prefix="/api/furigana", tags=["furigana"])
 
@@ -44,6 +43,19 @@ def annotate(text: str) -> str:
                 continue
         parts.append(w.surface)
     return "".join(parts)
+
+
+def reading_for(text: str) -> str:
+    """Hiragana reading for a kanji-bearing word/phrase via fugashi.
+
+    Returns "" for kana-only or unrecognized input. Used as a fallback when
+    the LLM omits the reading field.
+    """
+    if not _has_kanji(text):
+        return ""
+    parts = [t["reading"] or t["surface"] for t in tokenize(text)]
+    out = "".join(parts)
+    return out if out and out != text else ""
 
 
 def tokenize(text: str) -> list[dict]:
@@ -130,7 +142,7 @@ class LookupResponse(BaseModel):
     reading: str = ""
 
 
-_lookup_cache: dict[tuple[str, bool], LookupResponse] = {}
+_lookup_cache: dict[tuple[str, str, str, bool], LookupResponse] = {}
 
 
 def _is_lookupable(text: str) -> bool:
@@ -149,53 +161,26 @@ def _is_lookupable(text: str) -> bool:
 
 @router.post("/lookup", response_model=LookupResponse)
 async def lookup_word(req: LookupRequest):
-    """Look up an English gloss/translation for a Japanese word or phrase, using Claude. Cached."""
+    """Look up an English gloss/translation for a Japanese word or phrase. Cached."""
     if not _is_lookupable(req.surface):
         return LookupResponse(meaning="")
 
-    key = ((req.lemma or req.surface).strip(), req.is_phrase)
+    key = (
+        get_provider(),
+        get_model(),
+        (req.lemma or req.surface).strip(),
+        req.is_phrase,
+    )
     if key in _lookup_cache:
         return _lookup_cache[key]
 
-    client = get_anthropic_client()
-    if req.is_phrase:
-        prompt = f"""Translate this Japanese phrase or sentence fragment naturally into English, preserving its meaning as it appears in context.
-
-Phrase: {req.surface}
-Surrounding context: {req.context[:300]}
-
-Return ONLY a JSON object with:
-- "meaning": a natural English translation (concise, max ~20 words)
-- "reading": the hiragana reading of the phrase (empty string if the phrase has no kanji)
-
-Return ONLY valid JSON, no other text."""
-    else:
-        prompt = f"""Give a brief English gloss for this Japanese word as it appears in context.
-
-Word (as it appears): {req.surface}
-Dictionary form: {req.lemma or req.surface}
-Context: {req.context[:300]}
-
-Return ONLY a JSON object with:
-- "meaning": a short English gloss (max 8 words, e.g. "to eat" or "quickly, rapidly")
-- "reading": the hiragana reading of the dictionary form (empty string if the word has no kanji)
-
-Return ONLY valid JSON, no other text."""
-
-    message = call_claude(
-        client,
-        model="claude-sonnet-4-6",
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}],
+    data = await translate_lookup(req.surface, req.lemma, req.context, req.is_phrase)
+    reading = (data.get("reading") or "").strip()
+    if not reading:
+        reading = reading_for(req.lemma or req.surface)
+    resp = LookupResponse(
+        meaning=(data.get("meaning") or "").strip(),
+        reading=reading,
     )
-    try:
-        data = parse_json_response(message.content[0].text)
-        resp = LookupResponse(
-            meaning=data.get("meaning", "").strip(),
-            reading=data.get("reading", "").strip(),
-        )
-    except (json.JSONDecodeError, AttributeError, IndexError):
-        resp = LookupResponse(meaning="")
-
     _lookup_cache[key] = resp
     return resp

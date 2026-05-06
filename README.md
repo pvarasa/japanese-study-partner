@@ -168,7 +168,7 @@ Base URL: `http://localhost:8000/api`
 |--------|------|-------------|
 | POST | `/furigana/annotate` | Annotate texts with furigana ruby HTML. Body: `{texts: string[]}` → `{results: string[]}` |
 | POST | `/furigana/tokenize` | Split text into tokens with surface/reading/lemma, merging meanings from a supplied word list. Used by the reading-page word popover. |
-| POST | `/furigana/lookup` | Claude-powered gloss for a Japanese word or phrase. Body: `{surface, lemma, context, is_phrase}` → `{meaning, reading}`. With `is_phrase=true` (used by the selection-translation popup), the prompt asks for a natural translation instead of a single-word gloss. Cached in-process per `(lemma_or_surface, is_phrase)`. |
+| POST | `/furigana/lookup` | English gloss for a Japanese word or phrase. Body: `{surface, lemma, context, is_phrase}` → `{meaning, reading}`. With `is_phrase=true` (used by the selection-translation popup), the prompt asks for a natural translation instead of a single-word gloss. Backed by Claude or a local Ollama model — see `TRANSLATION_PROVIDER`. Cached in-process per `(provider, model, lemma_or_surface, is_phrase)`. |
 
 ### Settings (`/api/settings`)
 | Method | Path | Description |
@@ -305,8 +305,15 @@ All loaded from `.env` at the project root via `python-dotenv`. See `.env.exampl
 | `WHISPER_MODEL` | No | `kotoba-tech/kotoba-whisper-v2.0-faster` | faster-whisper model name or HF repo. Alternatives: `large-v3-turbo`, `large-v3`, `medium`, `small` |
 | `WHISPER_DEVICE` | No | `auto` | `auto` / `cuda` / `cpu`. `auto` picks CUDA if available |
 | `WHISPER_COMPUTE_TYPE` | No | `auto` | `auto` / `float16` / `int8_float16` / `int8` / `float32`. `auto` picks `float16` on GPU, `int8` on CPU |
+| `TRANSLATION_PROVIDER` | No | `anthropic` | Backend for `/api/furigana/lookup`. `anthropic` calls Claude; `ollama` calls a local Ollama server. |
+| `OLLAMA_BASE_URL` | No | `http://host.docker.internal:11434` | Ollama server URL. From WSL, point at the Windows host (enable "Expose Ollama to the network" in the Ollama tray). |
+| `OLLAMA_TRANSLATION_MODEL` | No | `qwen2.5:7b` | Ollama model tag used for translation lookups. |
 
 The Kotoba-Whisper default is a Japanese-fine-tuned Whisper variant (~1.5 GB). It downloads to the Hugging Face cache on first transcription call. Not downloaded when `WHISPER_ENABLED=false`.
+
+### Local translations via Ollama (optional)
+
+Set `TRANSLATION_PROVIDER=ollama` to route hover/select word lookups through a local model instead of Claude. Pull the model once on the Ollama host: `ollama pull qwen2.5:7b`. Other lookups (ingest, reading-passage generation, conversation tutor) still use Claude.
 
 ## Data Flow
 
