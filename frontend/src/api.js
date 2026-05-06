@@ -58,8 +58,8 @@ export const api = {
   // Furigana
   furigana: (texts) => request('/furigana/annotate', { method: 'POST', body: { texts } }),
   tokenize: (text, words) => request('/furigana/tokenize', { method: 'POST', body: { text, words } }),
-  lookupWord: (surface, lemma, context) =>
-    request('/furigana/lookup', { method: 'POST', body: { surface, lemma, context } }),
+  lookupWord: (surface, lemma, context, isPhrase = false) =>
+    request('/furigana/lookup', { method: 'POST', body: { surface, lemma, context, is_phrase: isPhrase } }),
 
   // Generate
   generateQuestion: (itemId, mode) =>

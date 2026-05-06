@@ -9,7 +9,7 @@ A personal Japanese language learning app with spaced repetition, AI-powered con
 | Backend | Python 3.11+, FastAPI, SQLAlchemy |
 | Database | SQLite (default, zero-config) or PostgreSQL (via `DATABASE_URL`) |
 | Frontend | React 19, Vite 8, Tailwind CSS 4 |
-| AI | Anthropic Claude API (Sonnet 4) |
+| AI | Anthropic Claude API (Sonnet 4.6) |
 | JP Parsing | fugashi + unidic-lite |
 | Speech-to-text | faster-whisper (CTranslate2) — local, Japanese-tuned Kotoba-Whisper by default |
 | Package Mgmt | uv (Python), npm (JS) |
@@ -43,7 +43,7 @@ jp_study_partner/
 │       ├── models.py             # ORM models: Item, Tag, Source, Setting, StudySession
 │       ├── schemas.py            # Pydantic request/response schemas
 │       ├── srs.py                # Spaced repetition algorithm
-│       ├── llm.py                # Shared helper for parsing JSON out of Claude responses
+│       ├── llm.py                # Shared LLM helpers: client construction, error-handling wrapper around messages.create, JSON parsing
 │       ├── deps.py               # FastAPI dependencies (get_user_id from X-User-ID header)
 │       └── routers/
 │           ├── items.py          # CRUD for study items
@@ -168,7 +168,7 @@ Base URL: `http://localhost:8000/api`
 |--------|------|-------------|
 | POST | `/furigana/annotate` | Annotate texts with furigana ruby HTML. Body: `{texts: string[]}` → `{results: string[]}` |
 | POST | `/furigana/tokenize` | Split text into tokens with surface/reading/lemma, merging meanings from a supplied word list. Used by the reading-page word popover. |
-| POST | `/furigana/lookup` | Claude-powered single-word gloss for on-the-fly lookups. Cached per lemma in-process. |
+| POST | `/furigana/lookup` | Claude-powered gloss for a Japanese word or phrase. Body: `{surface, lemma, context, is_phrase}` → `{meaning, reading}`. With `is_phrase=true` (used by the selection-translation popup), the prompt asks for a natural translation instead of a single-word gloss. Cached in-process per `(lemma_or_surface, is_phrase)`. |
 
 ### Settings (`/api/settings`)
 | Method | Path | Description |
@@ -185,6 +185,11 @@ Base URL: `http://localhost:8000/api`
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/features` | Returns server feature flags. Currently: `{whisper_enabled: bool}`. Read by the frontend on mount to adapt the UI. |
+
+### Health (`/api/health`)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Liveness check. Returns `{status: "ok"}`. |
 
 ### Converse (`/api/converse`)
 | Method | Path | Description |
@@ -213,7 +218,7 @@ Ease factor is clamped to [1.3, 3.0]. Items are due when `srs_due <= now`, order
 
 Modes 1–4 use SRS rating after each card. Flashcard modes (1–2) include a **Generate example** button on reveal that calls `/generate/example-sentence` to produce a fresh AI-generated sentence with translation; press it multiple times for variety.
 
-5. **Reading Practice** - AI generates a short passage using words from your library + new vocabulary. Accepts optional topic prompt. Shows furigana, toggleable translation, and word list. New words can be added to library with one click.
+5. **Reading Practice** - AI generates a short passage using words from your library + new vocabulary. Accepts optional topic prompt. Shows furigana, toggleable translation, and word list. Click any word for an inline gloss, or **drag-select a phrase or sentence fragment** to get a natural English translation in a popup. New words can be added to library with one click.
 6. **Conversation** - Open-ended Japanese Q&A. The tutor asks a level-appropriate question; you reply by typing or by recording audio (local Whisper transcription). Returns inline corrections, a natural rewrite of your answer, short feedback, and a follow-up question. Each submitted turn is logged to the study session.
 
 ## JLPT Level Setting

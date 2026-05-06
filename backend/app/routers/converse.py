@@ -1,14 +1,12 @@
-import os
 import random
 
-from anthropic import Anthropic
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_user_id
-from ..llm import parse_json_response
+from ..llm import call_claude, get_anthropic_client, parse_json_response
 from ..models import Item
 from .settings import LEVEL_DESCRIPTOR, get_jlpt_level
 
@@ -84,13 +82,6 @@ class ReplyOut(BaseModel):
     follow_up_hint: str
 
 
-def _client() -> Anthropic:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-    return Anthropic(api_key=api_key)
-
-
 @router.post("/start", response_model=StartOut)
 def start_conversation(
     user_id: str = Depends(get_user_id),
@@ -103,8 +94,9 @@ def start_conversation(
         f"- {it.japanese} ({it.reading}): {it.meaning}" for it in sample
     ) or "(library empty)"
 
-    msg = _client().messages.create(
-        model="claude-sonnet-4-20250514",
+    msg = call_claude(
+        get_anthropic_client(),
+        model="claude-sonnet-4-6",
         max_tokens=512,
         messages=[{
             "role": "user",
@@ -140,8 +132,9 @@ def reply(
         history_lines.append(f"{label}: {turn.content}")
     history_text = "\n".join(history_lines) or "(no prior turns)"
 
-    msg = _client().messages.create(
-        model="claude-sonnet-4-20250514",
+    msg = call_claude(
+        get_anthropic_client(),
+        model="claude-sonnet-4-6",
         max_tokens=1536,
         messages=[{
             "role": "user",

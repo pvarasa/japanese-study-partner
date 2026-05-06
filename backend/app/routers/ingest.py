@@ -1,14 +1,12 @@
 import json
-import os
 
 import httpx
-from anthropic import Anthropic
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_user_id
-from ..llm import parse_json_response
+from ..llm import call_claude, get_anthropic_client, parse_json_response
 from ..models import Item, Source
 from ..schemas import IngestItem, IngestResponse
 from .items import _get_or_create_tags
@@ -56,13 +54,10 @@ async def _fetch_url(url: str) -> str:
 
 
 def _extract_with_llm(text: str, level: str) -> dict:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-    client = Anthropic(api_key=api_key)
     prompt = EXTRACT_PROMPT.format(level=level, descriptor=LEVEL_DESCRIPTOR[level])
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    message = call_claude(
+        get_anthropic_client(),
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         messages=[
             {"role": "user", "content": f"{prompt}\n\n---\n\n{text[:8000]}"}

@@ -1,14 +1,12 @@
-import os
 import random
 from typing import Optional
 
-from anthropic import Anthropic
 from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_user_id
-from ..llm import parse_json_response
+from ..llm import call_claude, get_anthropic_client, parse_json_response
 from ..models import Item
 from ..schemas import ExampleSentence, ReadingPassage, ReadingWord, StudyQuestion
 from .settings import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
@@ -51,14 +49,10 @@ def generate_question(
     if not item:
         raise HTTPException(404, "Item not found")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-
     level = get_jlpt_level(db, user_id)
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    message = call_claude(
+        get_anthropic_client(),
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         messages=[{
             "role": "user",
@@ -119,14 +113,10 @@ def generate_example_sentence(
     if not item:
         raise HTTPException(404, "Item not found")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-
     level = get_jlpt_level(db, user_id)
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    message = call_claude(
+        get_anthropic_client(),
+        model="claude-sonnet-4-6",
         max_tokens=256,
         messages=[{
             "role": "user",
@@ -193,14 +183,10 @@ def generate_reading(
     if prompt:
         topic_instruction = f"TOPIC GUIDANCE: The learner wants the passage to be about: {prompt}"
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
-
     level = get_jlpt_level(db, user_id)
-    client = Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    message = call_claude(
+        get_anthropic_client(),
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         messages=[{
             "role": "user",
