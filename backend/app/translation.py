@@ -14,7 +14,7 @@ from .llm import call_claude, get_anthropic_client, parse_json_response
 log = logging.getLogger("app.translation")
 
 DEFAULT_OLLAMA_URL = "http://host.docker.internal:11434"
-DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 
 _BUSY_MSG = "The translation service is busy right now. Please try again in a moment."
 _TIMEOUT_MSG = "The translation service did not respond in time. Please try again."
@@ -89,6 +89,10 @@ async def _translate_ollama(prompt: str) -> dict:
         "messages": [{"role": "user", "content": prompt}],
         "format": "json",
         "stream": False,
+        # think:false disables Qwen3-style reasoning tokens. Without it, qwen3.x
+        # emits a long <think>...</think> block that breaks the JSON output and
+        # ~10× the latency. Ignored by non-thinking models like qwen2.5.
+        "think": False,
         # keep_alive pins the model in VRAM between requests so we don't pay the
         # cold-load tax (~10–30s on a 7B Q4) every time the user idles past Ollama's
         # 5-minute default eviction window.

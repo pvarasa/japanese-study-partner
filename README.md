@@ -307,13 +307,13 @@ All loaded from `.env` at the project root via `python-dotenv`. See `.env.exampl
 | `WHISPER_COMPUTE_TYPE` | No | `auto` | `auto` / `float16` / `int8_float16` / `int8` / `float32`. `auto` picks `float16` on GPU, `int8` on CPU |
 | `TRANSLATION_PROVIDER` | No | `anthropic` | Backend for `/api/furigana/lookup`. `anthropic` calls Claude; `ollama` calls a local Ollama server. |
 | `OLLAMA_BASE_URL` | No | `http://host.docker.internal:11434` | Ollama server URL. From WSL, point at the Windows host (enable "Expose Ollama to the network" in the Ollama tray). |
-| `OLLAMA_TRANSLATION_MODEL` | No | `qwen2.5:7b` | Ollama model tag used for translation lookups. |
+| `OLLAMA_TRANSLATION_MODEL` | No | `qwen3.5:9b` | Ollama model tag used for translation lookups. |
 
 The Kotoba-Whisper default is a Japanese-fine-tuned Whisper variant (~1.5 GB). It downloads to the Hugging Face cache on first transcription call. Not downloaded when `WHISPER_ENABLED=false`.
 
 ### Local translations via Ollama (optional)
 
-Set `TRANSLATION_PROVIDER=ollama` to route hover/select word lookups through a local model instead of Claude. Pull the model once on the Ollama host: `ollama pull qwen2.5:7b`. Other lookups (ingest, reading-passage generation, conversation tutor) still use Claude.
+Set `TRANSLATION_PROVIDER=ollama` to route hover/select word lookups through a local model instead of Claude. Pull the model once on the Ollama host: `ollama pull qwen3.5:9b`. See [`bench_report.html`](./bench_report.html) for the model selection rationale (50-case comparison across 8 providers). Other lookups (ingest, reading-passage generation, conversation tutor) still use Claude.
 
 ## Data Flow
 
