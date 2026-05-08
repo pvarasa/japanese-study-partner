@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 # Load .env from project root (parent of backend/)
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
+import asyncio
 import os
 
 from fastapi import FastAPI
@@ -14,12 +15,21 @@ from fastapi.staticfiles import StaticFiles
 from .database import Base, engine
 from .routers import converse, furigana, generate, ingest, items, settings, study, transcribe
 from .routers.transcribe import whisper_enabled
+from .translation import prewarm as prewarm_translation
 
 # SQLite only — PostgreSQL schema is managed by Alembic (run via entrypoint)
 if not os.environ.get("DATABASE_URL"):
     Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="日本語 Study Partner", version="0.1.0")
+
+
+@app.on_event("startup")
+async def _startup_prewarm() -> None:
+    # Kick off the Ollama model load in the background so it doesn't block
+    # uvicorn from accepting connections. The first user lookup will join the
+    # in-flight load if it isn't done yet.
+    asyncio.create_task(prewarm_translation())
 
 app.add_middleware(
     CORSMiddleware,

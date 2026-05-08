@@ -93,14 +93,19 @@ async def _translate_ollama(prompt: str) -> dict:
         # emits a long <think>...</think> block that breaks the JSON output and
         # ~10× the latency. Ignored by non-thinking models like qwen2.5.
         "think": False,
-        # keep_alive pins the model in VRAM between requests so we don't pay the
-        # cold-load tax (~10–30s on a 7B Q4) every time the user idles past Ollama's
-        # 5-minute default eviction window.
-        "keep_alive": "30m",
+        # keep_alive=-1 tells Ollama to keep the model loaded indefinitely. Without
+        # this, idle eviction (default 5 min) triggers a cold reload that can take
+        # 30s–3min depending on the model — long enough to hit our request timeout
+        # and trigger a death-loop where every request sees a half-loaded model.
+        "keep_alive": -1,
         "options": {"temperature": 0.2, "num_predict": 200},
     }
+    # Timeout must comfortably exceed the cold-load time of the largest model we
+    # might select (qwen3.5:9b benched at 191s cold). Once warm, calls return
+    # in <1s — the long timeout only fires on the very first call after a server
+    # restart or eviction, which is also when prewarm() should have already paid it.
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             r = await client.post(f"{base}/api/chat", json=payload)
             r.raise_for_status()
             data = r.json()
@@ -121,3 +126,29 @@ async def _translate_ollama(prompt: str) -> dict:
     except Exception:
         log.warning("Ollama returned non-JSON content: %.200s", content)
         return {}
+
+
+async def prewarm() -> None:
+    """Fire-and-forget request to load the configured Ollama model into VRAM.
+
+    Called from the FastAPI startup hook. Skips silently when the active provider
+    isn't Ollama, when Ollama isn't reachable, or when the model isn't pulled —
+    we don't want to block app startup on this.
+    """
+    if get_provider() != "ollama":
+        return
+    base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).rstrip("/")
+    model = os.environ.get("OLLAMA_TRANSLATION_MODEL", DEFAULT_OLLAMA_MODEL)
+    log.info("Prewarming Ollama model %s at %s", model, base)
+    # Empty prompt with keep_alive=-1 just resident-loads the model; it returns
+    # quickly once weights are in VRAM. Ollama supports this idiom on /api/generate.
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            r = await client.post(
+                f"{base}/api/generate",
+                json={"model": model, "prompt": "", "keep_alive": -1, "stream": False},
+            )
+            r.raise_for_status()
+        log.info("Prewarm complete for %s", model)
+    except Exception as e:
+        log.warning("Prewarm of %s failed (non-fatal): %s", model, e)

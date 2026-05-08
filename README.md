@@ -9,7 +9,7 @@ A personal Japanese language learning app with spaced repetition, AI-powered con
 | Backend | Python 3.11+, FastAPI, SQLAlchemy |
 | Database | SQLite (default, zero-config) or PostgreSQL (via `DATABASE_URL`) |
 | Frontend | React 19, Vite 8, Tailwind CSS 4 |
-| AI | Anthropic Claude API (Sonnet 4.6) |
+| AI | Anthropic Claude API (Sonnet 4.6); optional local Ollama for word-lookup translations |
 | JP Parsing | fugashi + unidic-lite |
 | Speech-to-text | faster-whisper (CTranslate2) — local, Japanese-tuned Kotoba-Whisper by default |
 | Package Mgmt | uv (Python), npm (JS) |
@@ -44,6 +44,7 @@ jp_study_partner/
 │       ├── schemas.py            # Pydantic request/response schemas
 │       ├── srs.py                # Spaced repetition algorithm
 │       ├── llm.py                # Shared LLM helpers: client construction, error-handling wrapper around messages.create, JSON parsing
+│       ├── translation.py        # Pluggable JP→EN translation: Claude or local Ollama (TRANSLATION_PROVIDER)
 │       ├── deps.py               # FastAPI dependencies (get_user_id from X-User-ID header)
 │       └── routers/
 │           ├── items.py          # CRUD for study items
@@ -314,6 +315,10 @@ The Kotoba-Whisper default is a Japanese-fine-tuned Whisper variant (~1.5 GB). I
 ### Local translations via Ollama (optional)
 
 Set `TRANSLATION_PROVIDER=ollama` to route hover/select word lookups through a local model instead of Claude. Pull the model once on the Ollama host: `ollama pull qwen3.5:9b`. See [`bench_report.html`](./bench_report.html) for the model selection rationale (50-case comparison across 8 providers). Other lookups (ingest, reading-passage generation, conversation tutor) still use Claude.
+
+When the backend boots with `TRANSLATION_PROVIDER=ollama`, it fires a background prewarm against the configured model so the first user lookup doesn't pay the cold-load tax (~3 min for qwen3.5:9b at Q4). The Ollama request also sets `keep_alive: -1` to pin the model in VRAM indefinitely — once loaded it stays loaded until Ollama itself is restarted.
+
+If you also use other Ollama models on the same host, set `OLLAMA_MAX_LOADED_MODELS=2` (or higher) on the Ollama side; otherwise Ollama's default of 1 loaded model will evict qwen3.5:9b every time another model is used and the next lookup will cold-load again.
 
 ## Data Flow
 

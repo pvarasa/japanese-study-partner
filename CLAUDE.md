@@ -51,13 +51,13 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - **Backend**: `backend/app/` — FastAPI, SQLAlchemy ORM. Python deps managed with `uv`.
 - **Frontend**: `frontend/src/` — React 19, Vite 8, Tailwind CSS 4. Dark mode only.
 - **Database**: SQLite at `backend/nihongo.db` by default (auto-created, `create_all` on startup). Set `DATABASE_URL` to use PostgreSQL instead — schema managed by Alembic (`backend/alembic/`), run automatically by `backend/entrypoint.sh` in Docker.
-- **AI**: Anthropic Claude API (Sonnet) for content ingestion, question generation, and the conversation tutor. Key in `.env` at project root.
+- **AI**: Anthropic Claude API (Sonnet) for content ingestion, question generation, and the conversation tutor. Word-lookup translation (`/api/furigana/lookup`) is pluggable — Claude by default, or a local Ollama model via `TRANSLATION_PROVIDER=ollama`. Key in `.env` at project root.
 - **Speech-to-text**: local faster-whisper (CTranslate2). Default model is the Japanese-tuned `kotoba-tech/kotoba-whisper-v2.0-faster`; overridable via `WHISPER_MODEL`/`WHISPER_DEVICE`/`WHISPER_COMPUTE_TYPE` env vars. Lazy-loaded singleton in `routers/transcribe.py`. Disabled by default in Docker (`WHISPER_ENABLED=false`).
 - **JP text processing**: fugashi + unidic-lite for tokenization/readings.
 
 ## Key Files
 
-- `backend/app/main.py` — App entry, loads `.env` from project root, mounts routers, serves static frontend in production, exposes `/api/features`
+- `backend/app/main.py` — App entry, loads `.env` from project root, mounts routers, serves static frontend in production, exposes `/api/features`. On startup fires a background `prewarm()` against Ollama when `TRANSLATION_PROVIDER=ollama` so the first lookup is warm.
 - `backend/app/database.py` — SQLAlchemy engine: PostgreSQL if `DATABASE_URL` is set, otherwise SQLite with Windows path normalization
 - `backend/app/models.py` — SQLAlchemy models: Item (word/grammar/expression with SRS fields), Tag, Source, Setting (per-user key/value), StudySession; all data tables carry `user_id`
 - `backend/app/deps.py` — FastAPI dependency `get_user_id`: reads `X-User-ID` header, defaults to `"default"` for single-user use
@@ -103,4 +103,5 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - `alembic.ini` has an empty `sqlalchemy.url` — the actual URL is derived from `app.database.engine` at runtime in `alembic/env.py`; do not hardcode it there
 - Multi-user: every data-bearing endpoint reads `X-User-ID` from the request header (default `"default"`); the frontend currently omits this header so all data lands under the `"default"` user. To wire up multi-user on the frontend, add the header in the `request()` helper in `frontend/src/api.js`
 - Translation provider for `/api/furigana/lookup` is selected at request time via `TRANSLATION_PROVIDER` (`anthropic` default, `ollama` for a local model). The in-process lookup cache key includes `(provider, model)`, so flipping the env var doesn't return stale results — but the cache is per-process, so it's wiped on restart
+- Ollama translation requests use `keep_alive: -1` (load forever) and a 300s per-request timeout. The 300s figure is sized for qwen3.5:9b's ~191s cold load measured in the bench. The startup prewarm in `main.py` is fire-and-forget — uvicorn accepts connections immediately and a user lookup arriving before prewarm finishes just joins the in-flight model load. With Ollama's default `OLLAMA_MAX_LOADED_MODELS=1`, using any other model on the same Ollama host evicts the translation model and the next lookup pays the cold load again
 - Dockerfile WORKDIR is `/app/backend` (not `/app`) so that `main.py`'s `../frontend/dist` path matches the same relative layout as local dev
