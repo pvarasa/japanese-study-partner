@@ -123,7 +123,7 @@ export default function ReadingText({ text, words = [], className = '' }) {
       })
 
       if (!cached) {
-        api.lookupWord(selText, '', containingSentence(text, selText), true)
+        api.lookupWord(selText, '', '', true)
           .then(r => {
             const entry = { meaning: r.meaning || '', reading: r.reading || '', error: false }
             setSelLookups(prev => ({ ...prev, [selText]: entry }))
