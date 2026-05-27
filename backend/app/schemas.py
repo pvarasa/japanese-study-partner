@@ -80,6 +80,7 @@ class StudyQuestion(BaseModel):
     answer: str
     options: list[str] = []  # for multiple choice
     context: Optional[str] = None
+    translation: Optional[str] = None
 
 
 class ReadingWord(BaseModel):

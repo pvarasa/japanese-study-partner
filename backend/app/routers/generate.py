@@ -34,6 +34,7 @@ Return JSON with:
 - "answer": the correct answer
 - "options": array of 4 choices (for fill_blank/grammar_drill) or empty array
 - "context": optional hint or context
+- "translation": natural English translation of the full sentence (with the blank filled in); include spaces between all words
 
 Return ONLY valid JSON."""
 
@@ -79,6 +80,7 @@ def generate_question(
         answer=data["answer"],
         options=data.get("options", []),
         context=data.get("context"),
+        translation=data.get("translation"),
     )
 
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2 } from 'lucide-react'
+import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2, Eye, EyeOff } from 'lucide-react'
 import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
@@ -26,6 +26,7 @@ export default function Study() {
   const [done, setDone] = useState(false)
   const [generatedExample, setGeneratedExample] = useState(null)
   const [generatingExample, setGeneratingExample] = useState(false)
+  const [translationRevealed, setTranslationRevealed] = useState(false)
 
   const startStudy = async (m) => {
     setMode(m)
@@ -76,6 +77,7 @@ export default function Study() {
       setAnswerChecked(false)
       setGeneratedExample(null)
       setGeneratingExample(false)
+      setTranslationRevealed(false)
 
       if (mode === 'fill_blank' || mode === 'sentence_build') {
         setLoading(true)
@@ -273,6 +275,21 @@ export default function Study() {
           </div>
           <Ruby text={question.prompt} className="text-xl" />
           {question.context && <div className="text-sm text-gray-500">{question.context}</div>}
+
+          {question.translation && (
+            <div className="text-sm">
+              <button
+                onClick={() => setTranslationRevealed(v => !v)}
+                className="flex items-center gap-1.5 text-gray-600 hover:text-gray-400 transition-colors"
+              >
+                {translationRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                {translationRevealed ? 'Hide' : 'Show'} translation
+              </button>
+              {translationRevealed && (
+                <div className="mt-1.5 text-gray-500">{question.translation}</div>
+              )}
+            </div>
+          )}
 
           {question.options.length > 0 && !answerChecked && (
             <div className="grid grid-cols-2 gap-2">
