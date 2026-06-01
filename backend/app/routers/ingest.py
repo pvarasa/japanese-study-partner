@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_user_id
-from ..llm import call_claude, get_anthropic_client, parse_json_response
+from ..llm import complete_json
 from ..models import Item, Source
 from ..schemas import IngestItem, IngestResponse
 from .items import _get_or_create_tags
@@ -55,15 +55,7 @@ async def _fetch_url(url: str) -> str:
 
 def _extract_with_llm(text: str, level: str) -> dict:
     prompt = EXTRACT_PROMPT.format(level=level, descriptor=LEVEL_DESCRIPTOR[level])
-    message = call_claude(
-        get_anthropic_client(),
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        messages=[
-            {"role": "user", "content": f"{prompt}\n\n---\n\n{text[:8000]}"}
-        ],
-    )
-    return parse_json_response(message.content[0].text)
+    return complete_json(f"{prompt}\n\n---\n\n{text[:8000]}", max_tokens=4096)
 
 
 @router.post("/text", response_model=IngestResponse)

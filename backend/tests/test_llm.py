@@ -1,9 +1,11 @@
 """Tests for the shared LLM JSON-response parser."""
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from app.llm import parse_json_response
+from app import llm
+from app.llm import DEFAULT_MODEL, complete_json, parse_json_response
 
 
 def test_plain_json():
@@ -37,3 +39,22 @@ def test_trailing_whitespace_before_close_fence():
 def test_invalid_json_raises():
     with pytest.raises(json.JSONDecodeError):
         parse_json_response("not json")
+
+
+def test_complete_json_builds_request_and_parses(monkeypatch):
+    """complete_json wraps the content in a single user message and decodes the reply."""
+    captured = {}
+
+    def fake_call_claude(client, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(text='{"ok": true}')])
+
+    monkeypatch.setattr(llm, "get_anthropic_client", lambda: object())
+    monkeypatch.setattr(llm, "call_claude", fake_call_claude)
+
+    result = complete_json("hello", max_tokens=128)
+
+    assert result == {"ok": True}
+    assert captured["model"] == DEFAULT_MODEL
+    assert captured["max_tokens"] == 128
+    assert captured["messages"] == [{"role": "user", "content": "hello"}]

@@ -16,6 +16,8 @@ from fastapi import HTTPException
 
 log = logging.getLogger("app.llm")
 
+DEFAULT_MODEL = "claude-sonnet-4-6"
+
 _BUSY_MSG = "The AI service is busy right now. Please try again in a moment."
 _TIMEOUT_MSG = "The AI service did not respond in time. Please try again."
 _API_ERROR_MSG = "The AI service returned an error. Please try again later."
@@ -45,6 +47,23 @@ def parse_json_response(raw: str) -> dict:
         if raw.endswith("```"):
             raw = raw[:-3].rstrip()
     return json.loads(raw)
+
+
+def complete_json(content: str, *, max_tokens: int, model: str = DEFAULT_MODEL) -> dict:
+    """Send a single user message to Claude and return its parsed JSON reply.
+
+    Collapses the round-trip shared by every router: build the request, run it
+    through ``call_claude`` (which maps upstream API errors to HTTPExceptions),
+    and decode the JSON body. Raises ``json.JSONDecodeError`` if the reply isn't
+    valid JSON — callers that build a response from the result should guard it.
+    """
+    message = call_claude(
+        get_anthropic_client(),
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": content}],
+    )
+    return parse_json_response(message.content[0].text)
 
 
 def call_claude(client: Anthropic, *, retry_on_overload: bool = True, **kwargs) -> Any:

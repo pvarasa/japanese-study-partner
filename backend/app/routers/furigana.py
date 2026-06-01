@@ -35,6 +35,10 @@ def annotate(text: str) -> str:
     words = tagger(text)
     parts = []
     for w in words:
+        # MeCab drops inter-token whitespace from the surface; w.white_space
+        # holds the run that preceded this token, so re-emit it to keep
+        # English/mixed prompts (e.g. sentence-build questions) readable.
+        parts.append(getattr(w, "white_space", "") or "")
         kana = w.feature.kana
         if kana and _has_kanji(w.surface):
             hira = _kata_to_hira(kana)

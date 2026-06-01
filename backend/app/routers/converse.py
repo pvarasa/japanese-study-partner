@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_user_id
-from ..llm import call_claude, get_anthropic_client, parse_json_response
+from ..llm import complete_json
 from ..models import Item
 from .settings import LEVEL_DESCRIPTOR, get_jlpt_level
 
@@ -94,20 +94,14 @@ def start_conversation(
         f"- {it.japanese} ({it.reading}): {it.meaning}" for it in sample
     ) or "(library empty)"
 
-    msg = call_claude(
-        get_anthropic_client(),
-        model="claude-sonnet-4-6",
+    data = complete_json(
+        START_PROMPT.format(
+            level=level,
+            descriptor=LEVEL_DESCRIPTOR[level],
+            library_words=library_words,
+        ),
         max_tokens=512,
-        messages=[{
-            "role": "user",
-            "content": START_PROMPT.format(
-                level=level,
-                descriptor=LEVEL_DESCRIPTOR[level],
-                library_words=library_words,
-            ),
-        }],
     )
-    data = parse_json_response(msg.content[0].text)
     return StartOut(
         topic=data.get("topic", "conversation"),
         question=data["question"],
@@ -132,21 +126,15 @@ def reply(
         history_lines.append(f"{label}: {turn.content}")
     history_text = "\n".join(history_lines) or "(no prior turns)"
 
-    msg = call_claude(
-        get_anthropic_client(),
-        model="claude-sonnet-4-6",
+    parsed = complete_json(
+        REPLY_PROMPT.format(
+            level=level,
+            descriptor=LEVEL_DESCRIPTOR[level],
+            history=history_text,
+            user_text=data.user_text.replace('"', '\\"'),
+        ),
         max_tokens=1536,
-        messages=[{
-            "role": "user",
-            "content": REPLY_PROMPT.format(
-                level=level,
-                descriptor=LEVEL_DESCRIPTOR[level],
-                history=history_text,
-                user_text=data.user_text.replace('"', '\\"'),
-            ),
-        }],
     )
-    parsed = parse_json_response(msg.content[0].text)
 
     corrections = [Correction(**c) for c in parsed.get("corrections", [])]
     return ReplyOut(

@@ -73,6 +73,12 @@ class IngestResponse(BaseModel):
     items: list[IngestItem]
 
 
+class VocabHint(BaseModel):
+    japanese: str
+    reading: str = ""
+    meaning: str = ""
+
+
 class StudyQuestion(BaseModel):
     type: str  # flashcard, fill_blank, sentence_build, grammar_drill
     item_id: int
@@ -81,6 +87,7 @@ class StudyQuestion(BaseModel):
     options: list[str] = []  # for multiple choice
     context: Optional[str] = None
     translation: Optional[str] = None
+    vocabulary: list[VocabHint] = []  # key-word hints for sentence_build
 
 
 class ReadingWord(BaseModel):

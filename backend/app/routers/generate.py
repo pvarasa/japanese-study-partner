@@ -1,3 +1,4 @@
+import logging
 import random
 from typing import Optional
 
@@ -6,12 +7,19 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_user_id
-from ..llm import call_claude, get_anthropic_client, parse_json_response
+from ..llm import complete_json
 from ..models import Item
-from ..schemas import ExampleSentence, ReadingPassage, ReadingWord, StudyQuestion
+from ..schemas import ExampleSentence, ReadingPassage, ReadingWord, StudyQuestion, VocabHint
 from .settings import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
+
+log = logging.getLogger("app.generate")
+
+# Shown to the user when the model call succeeds but the response can't be
+# parsed/shaped into what we need (bad JSON, missing keys, etc.). call_claude
+# already maps upstream API failures to friendly messages of their own.
+_BAD_RESPONSE_MSG = "Couldn't generate this — the AI returned an unexpected response. Please try again."
 
 QUESTION_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
 
@@ -26,15 +34,16 @@ Generate a study question based on this item:
 Generate a question of type: {mode}
 
 For "fill_blank": Create a sentence with the target word/grammar blanked out. Provide 4 options.
-For "sentence_build": Give an English sentence and key vocabulary. The answer should be a natural Japanese sentence.
+For "sentence_build": Set "prompt" to ONLY the English sentence the learner should translate into Japanese — no instructions, no vocabulary, no quotation marks. Put the helper words in "vocabulary" instead. The answer should be a natural Japanese sentence.
 For "grammar_drill": Create a sentence that tests correct usage of the grammar pattern. Provide 4 options.
 
 Return JSON with:
-- "prompt": the question text
+- "prompt": the question text (for sentence_build, just the plain English sentence to translate)
 - "answer": the correct answer
 - "options": array of 4 choices (for fill_blank/grammar_drill) or empty array
-- "context": optional hint or context
+- "context": optional short hint — for sentence_build, a brief grammar/structure tip in English; do NOT simply restate the full Japanese answer
 - "translation": natural English translation of the full sentence (with the blank filled in); include spaces between all words
+- "vocabulary": for sentence_build ONLY, an array of 2-4 key words to help, each {{"japanese": dictionary form, "reading": hiragana reading, "meaning": brief English gloss}}; empty array for other types
 
 Return ONLY valid JSON."""
 
@@ -51,13 +60,9 @@ def generate_question(
         raise HTTPException(404, "Item not found")
 
     level = get_jlpt_level(db, user_id)
-    message = call_claude(
-        get_anthropic_client(),
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": QUESTION_PROMPT.format(
+    try:
+        data = complete_json(
+            QUESTION_PROMPT.format(
                 level=level,
                 descriptor=LEVEL_DESCRIPTOR[level],
                 type=item.type,
@@ -68,20 +73,34 @@ def generate_question(
                 examples=item.example_sentences or "[]",
                 mode=mode,
             ),
-        }],
-    )
+            max_tokens=1024,
+        )
 
-    data = parse_json_response(message.content[0].text)
+        vocabulary = [
+            VocabHint(
+                japanese=v.get("japanese", ""),
+                reading=v.get("reading", ""),
+                meaning=v.get("meaning", ""),
+            )
+            for v in data.get("vocabulary", [])
+            if v.get("japanese")
+        ]
 
-    return StudyQuestion(
-        type=mode,
-        item_id=item.id,
-        prompt=data["prompt"],
-        answer=data["answer"],
-        options=data.get("options", []),
-        context=data.get("context"),
-        translation=data.get("translation"),
-    )
+        return StudyQuestion(
+            type=mode,
+            item_id=item.id,
+            prompt=data["prompt"],
+            answer=data["answer"],
+            options=data.get("options", []),
+            context=data.get("context"),
+            translation=data.get("translation"),
+            vocabulary=vocabulary,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("generate_question failed (item_id=%s, mode=%s)", item_id, mode)
+        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)
 
 
 EXAMPLE_SENTENCE_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
@@ -116,13 +135,9 @@ def generate_example_sentence(
         raise HTTPException(404, "Item not found")
 
     level = get_jlpt_level(db, user_id)
-    message = call_claude(
-        get_anthropic_client(),
-        model="claude-sonnet-4-6",
-        max_tokens=256,
-        messages=[{
-            "role": "user",
-            "content": EXAMPLE_SENTENCE_PROMPT.format(
+    try:
+        data = complete_json(
+            EXAMPLE_SENTENCE_PROMPT.format(
                 level=level,
                 descriptor=LEVEL_DESCRIPTOR[level],
                 type=item.type,
@@ -131,11 +146,14 @@ def generate_example_sentence(
                 meaning=item.meaning,
                 examples=item.example_sentences or "[]",
             ),
-        }],
-    )
-
-    data = parse_json_response(message.content[0].text)
-    return ExampleSentence(japanese=data["japanese"], english=data["english"])
+            max_tokens=256,
+        )
+        return ExampleSentence(japanese=data["japanese"], english=data["english"])
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("generate_example_sentence failed (item_id=%s)", item_id)
+        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)
 
 
 READING_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
@@ -186,13 +204,9 @@ def generate_reading(
         topic_instruction = f"TOPIC GUIDANCE: The learner wants the passage to be about: {prompt}"
 
     level = get_jlpt_level(db, user_id)
-    message = call_claude(
-        get_anthropic_client(),
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": READING_PROMPT.format(
+    try:
+        data = complete_json(
+            READING_PROMPT.format(
                 level=level,
                 descriptor=LEVEL_DESCRIPTOR[level],
                 length=READING_LENGTH[level],
@@ -200,26 +214,29 @@ def generate_reading(
                 library_words=library_words,
                 topic_instruction=topic_instruction,
             ),
-        }],
-    )
+            max_tokens=2048,
+        )
 
-    data = parse_json_response(message.content[0].text)
+        # Build lookup of library items for matching
+        library_set = {it.japanese for it in items}
 
-    # Build lookup of library items for matching
-    library_set = {it.japanese for it in items}
+        words = []
+        for w in data.get("words", []):
+            words.append(ReadingWord(
+                japanese=w["japanese"],
+                reading=w.get("reading", ""),
+                meaning=w.get("meaning", ""),
+                in_library=w["japanese"] in library_set or w.get("in_library", False),
+            ))
 
-    words = []
-    for w in data.get("words", []):
-        words.append(ReadingWord(
-            japanese=w["japanese"],
-            reading=w.get("reading", ""),
-            meaning=w.get("meaning", ""),
-            in_library=w["japanese"] in library_set or w.get("in_library", False),
-        ))
-
-    return ReadingPassage(
-        title=data.get("title", "Reading Practice"),
-        text=data["text"],
-        words=words,
-        translation=data.get("translation", ""),
-    )
+        return ReadingPassage(
+            title=data.get("title", "Reading Practice"),
+            text=data["text"],
+            words=words,
+            translation=data.get("translation", ""),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("generate_reading failed (user_id=%s)", user_id)
+        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)

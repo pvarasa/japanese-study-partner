@@ -12,6 +12,9 @@ const MODES = [
   { id: 'sentence_build', label: 'Build Sentence', desc: 'Translate to Japanese' },
 ]
 
+// Fallback when the generate request fails without a server-provided detail.
+const QUESTION_ERROR = 'Failed to load this question. Please try again.'
+
 export default function Study() {
   const [mode, setMode] = useState(null)
   const [items, setItems] = useState([])
@@ -27,10 +30,13 @@ export default function Study() {
   const [generatedExample, setGeneratedExample] = useState(null)
   const [generatingExample, setGeneratingExample] = useState(false)
   const [translationRevealed, setTranslationRevealed] = useState(false)
+  const [hintsRevealed, setHintsRevealed] = useState(false)
+  const [error, setError] = useState(null)
 
   const startStudy = async (m) => {
     setMode(m)
     setLoading(true)
+    setError(null)
     try {
       const due = await api.getDueItems({ limit: 20 })
       if (due.length === 0) {
@@ -52,7 +58,20 @@ export default function Study() {
         setQuestion(q)
       }
     } catch (err) {
-      console.error(err)
+      setError(err.message || QUESTION_ERROR)
+    }
+    setLoading(false)
+  }
+
+  // Re-generate the question for the current item (used by the error retry).
+  const retryQuestion = async () => {
+    setError(null)
+    setLoading(true)
+    try {
+      const q = await api.generateQuestion(items[current].id, mode)
+      setQuestion(q)
+    } catch (err) {
+      setError(err.message || QUESTION_ERROR)
     }
     setLoading(false)
   }
@@ -78,11 +97,17 @@ export default function Study() {
       setGeneratedExample(null)
       setGeneratingExample(false)
       setTranslationRevealed(false)
+      setHintsRevealed(false)
+      setError(null)
 
       if (mode === 'fill_blank' || mode === 'sentence_build') {
         setLoading(true)
-        const q = await api.generateQuestion(items[current + 1].id, mode)
-        setQuestion(q)
+        try {
+          const q = await api.generateQuestion(items[current + 1].id, mode)
+          setQuestion(q)
+        } catch (err) {
+          setError(err.message || QUESTION_ERROR)
+        }
         setLoading(false)
       }
     }
@@ -271,12 +296,52 @@ export default function Study() {
       {question ? (
         <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-4">
           <div className="text-sm text-gray-500 uppercase font-medium">
-            {mode === 'fill_blank' ? 'Fill in the blank' : 'Build the sentence'}
+            {mode === 'fill_blank' ? 'Fill in the blank' : 'Translate to Japanese'}
           </div>
-          <Ruby text={question.prompt} className="text-xl" />
-          {question.context && <div className="text-sm text-gray-500">{question.context}</div>}
 
-          {question.translation && (
+          {mode === 'sentence_build' ? (
+            <>
+              <div className="text-xl font-medium text-gray-100 leading-relaxed">
+                {question.prompt}
+              </div>
+              {(question.vocabulary?.length > 0 || question.context) && (
+                <div className="text-sm">
+                  <button
+                    onClick={() => setHintsRevealed(v => !v)}
+                    className="flex items-center gap-1.5 text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    {hintsRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                    {hintsRevealed ? 'Hide' : 'Show'} hints
+                  </button>
+                  {hintsRevealed && (
+                    <div className="mt-2 space-y-2">
+                      {question.vocabulary?.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {question.vocabulary.map((v, i) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-baseline gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 text-sm"
+                            >
+                              <Ruby text={v.japanese} className="text-gray-100" />
+                              {v.meaning && <span className="text-gray-500 text-xs">{v.meaning}</span>}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {question.context && <div className="text-gray-500">{question.context}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <Ruby text={question.prompt} className="text-xl" />
+              {question.context && <div className="text-sm text-gray-500">{question.context}</div>}
+            </>
+          )}
+
+          {question.translation && mode !== 'sentence_build' && (
             <div className="text-sm">
               <button
                 onClick={() => setTranslationRevealed(v => !v)}
@@ -345,6 +410,21 @@ export default function Study() {
               </div>
             )
           })()}
+        </div>
+      ) : error ? (
+        <div className="bg-gray-900 rounded-2xl border border-red-500/30 p-6 space-y-3 text-center">
+          <X className="mx-auto text-red-400" size={28} />
+          <div className="text-sm text-red-300/90">{error}</div>
+          <div className="flex gap-2 justify-center pt-1">
+            <button onClick={retryQuestion}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
+              Try again
+            </button>
+            <button onClick={() => setMode(null)}
+              className="border border-gray-700 text-gray-300 px-4 py-2 rounded-lg hover:bg-gray-800 text-sm">
+              Exit
+            </button>
+          </div>
         </div>
       ) : (
         <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-4">

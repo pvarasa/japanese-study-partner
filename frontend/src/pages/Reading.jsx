@@ -6,16 +6,19 @@ import ReadingText from '../components/ReadingText'
 import LevelBadge from '../components/LevelBadge'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
 import { useLevel } from '../context/LevelContext'
+import { usePersistentState } from '../hooks/usePersistentState'
 
 export default function Reading() {
   const { jlptLevel } = useLevel()
-  const [prompt, setPrompt] = useState('')
+  // Persisted so a generated passage survives a tab reload (mobile browsers
+  // discard backgrounded tabs and reload them fresh on return).
+  const [prompt, setPrompt] = usePersistentState('reading-prompt', '')
+  const [passage, setPassage] = usePersistentState('reading-passage', null)
+  const [savedWords, setSavedWords] = usePersistentState('reading-saved-words', [])
   const [loading, setLoading] = useState(false)
-  const [passage, setPassage] = useState(null)
   const [showTranslation, setShowTranslation] = useState(false)
   const [showWordMeanings, setShowWordMeanings] = useState(false)
   const [error, setError] = useState(null)
-  const [savedWords, setSavedWords] = useState(new Set())
   const [saving, setSaving] = useState(null)
 
   const generate = async () => {
@@ -24,7 +27,7 @@ export default function Reading() {
     setPassage(null)
     setShowTranslation(false)
     setShowWordMeanings(false)
-    setSavedWords(new Set())
+    setSavedWords([])
     try {
       const res = await api.generateReading(prompt || null)
       setPassage(res)
@@ -45,10 +48,10 @@ export default function Reading() {
         jlpt_level: jlptLevel,
         tags: ['from-reading'],
       })
-      setSavedWords(prev => new Set([...prev, word.japanese]))
+      setSavedWords(prev => prev.includes(word.japanese) ? prev : [...prev, word.japanese])
     } catch {
       // ignore duplicates
-      setSavedWords(prev => new Set([...prev, word.japanese]))
+      setSavedWords(prev => prev.includes(word.japanese) ? prev : [...prev, word.japanese])
     }
     setSaving(null)
   }
@@ -169,7 +172,7 @@ export default function Reading() {
                           <span className="text-sm text-gray-500 ml-2">{w.reading}</span>
                           <span className="text-sm text-gray-400 ml-3">{w.meaning}</span>
                         </div>
-                        {savedWords.has(w.japanese) ? (
+                        {savedWords.includes(w.japanese) ? (
                           <span className="text-green-400"><Check size={16} /></span>
                         ) : (
                           <button
