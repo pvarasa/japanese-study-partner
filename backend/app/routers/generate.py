@@ -3,6 +3,7 @@ import random
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -239,4 +240,60 @@ def generate_reading(
         raise
     except Exception:
         log.exception("generate_reading failed (user_id=%s)", user_id)
+        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)
+
+
+EVALUATE_PROMPT = """You are a Japanese language teacher evaluating a student's translation exercise.
+
+English sentence to translate: {prompt}
+Reference translation: {expected}
+Student's answer: {user_answer}
+
+Evaluate strictly but fairly. Accept natural variations and synonyms that preserve the meaning.
+- "correct": meaning is right, grammar is acceptable (minor stylistic differences are fine)
+- "partial": the right idea but has a significant grammar, particle, or conjugation error
+- "incorrect": wrong meaning, key element missing, or incomprehensible
+
+Return ONLY valid JSON:
+- "verdict": "correct", "partial", or "incorrect"
+- "feedback": 1-2 sentences of specific English feedback. For correct answers, brief encouragement. For partial/incorrect, name the exact error and why it matters.
+- "corrected": for partial or incorrect, a natural corrected Japanese sentence that preserves their intended meaning. null if verdict is "correct"."""
+
+
+class EvaluateIn(BaseModel):
+    user_answer: str
+    expected_answer: str
+    prompt: str
+
+
+class EvaluateOut(BaseModel):
+    verdict: str
+    feedback: str
+    corrected: Optional[str] = None
+
+
+@router.post("/evaluate", response_model=EvaluateOut)
+def evaluate_answer(
+    data: EvaluateIn,
+    user_id: str = Depends(get_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = complete_json(
+            EVALUATE_PROMPT.format(
+                prompt=data.prompt,
+                expected=data.expected_answer,
+                user_answer=data.user_answer,
+            ),
+            max_tokens=512,
+        )
+        return EvaluateOut(
+            verdict=result.get("verdict", "incorrect"),
+            feedback=result.get("feedback", ""),
+            corrected=result.get("corrected"),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("evaluate_answer failed")
         raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)

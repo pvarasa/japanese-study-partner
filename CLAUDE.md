@@ -62,10 +62,10 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - `backend/app/models.py` — SQLAlchemy models: Item (word/grammar/expression with SRS fields), Tag, Source, Setting (per-user key/value), StudySession; all data tables carry `user_id`
 - `backend/app/deps.py` — FastAPI dependency `get_user_id`: reads `X-User-ID` header, defaults to `"default"` for single-user use
 - `backend/app/srs.py` — Spaced repetition logic (again/hard/good ratings)
-- `backend/app/routers/items.py` — CRUD for study items
+- `backend/app/routers/items.py` — CRUD for study items; `GET /items/` supports `type`, `search`, `tag`, `jlpt_level`, and `accuracy` (`new`/`struggling`/`learning`/`strong`) filters
 - `backend/app/routers/study.py` — Due items, review submission, dashboard stats, session tracking
 - `backend/app/routers/ingest.py` — Text/URL/PDF ingestion via Claude API extraction (JLPT-level-aware)
-- `backend/app/routers/generate.py` — AI question generation (fill_blank, sentence_build, grammar_drill), on-demand example sentences, and reading passages (JLPT-level-aware)
+- `backend/app/routers/generate.py` — AI question generation (fill_blank, sentence_build, grammar_drill), on-demand example sentences, reading passages, and `/evaluate` for AI-assessed sentence_build answers (verdict + feedback + corrected version); all JLPT-level-aware
 - `backend/app/routers/furigana.py` — Furigana annotation endpoint using fugashi tokenizer; `lookup_word` delegates to `app.translation`
 - `backend/app/translation.py` — Pluggable JP→EN translation lookup; dispatches to Claude or a local Ollama server based on `TRANSLATION_PROVIDER`
 - `backend/app/routers/settings.py` — JLPT level setting + per-level prompt tuning (descriptor, reading length, new-word tier); exposes `get_jlpt_level(db, user_id)` used by ingest/generate/converse

@@ -5,11 +5,21 @@ import Ruby from '../components/Ruby'
 import { SkeletonLine } from '../components/Skeleton'
 
 const TYPES = ['all', 'word', 'grammar', 'expression']
+const LEVELS = ['all', 'N1', 'N2', 'N3', 'N4', 'N5']
+const ACCURACY = [
+  { value: 'all', label: 'All accuracy' },
+  { value: 'new', label: 'New (unreviewed)' },
+  { value: 'struggling', label: 'Struggling (<60%)' },
+  { value: 'learning', label: 'Learning (60–85%)' },
+  { value: 'strong', label: 'Strong (>85%)' },
+]
 
 export default function Items() {
   const [items, setItems] = useState([])
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
+  const [levelFilter, setLevelFilter] = useState('all')
+  const [accuracyFilter, setAccuracyFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({})
@@ -17,12 +27,14 @@ export default function Items() {
   const load = () => {
     const params = {}
     if (typeFilter !== 'all') params.type = typeFilter
+    if (levelFilter !== 'all') params.jlpt_level = levelFilter
+    if (accuracyFilter !== 'all') params.accuracy = accuracyFilter
     if (search) params.search = search
     setLoading(true)
     api.getItems(params).then(setItems).catch(console.error).finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [typeFilter])
+  useEffect(() => { load() }, [typeFilter, levelFilter, accuracyFilter])
 
   const handleSearch = (e) => {
     e.preventDefault()
@@ -50,9 +62,9 @@ export default function Items() {
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Library</h1>
 
-      {/* Search & filter */}
-      <div className="flex gap-2">
-        <form onSubmit={handleSearch} className="flex-1 relative">
+      {/* Search & filters */}
+      <div className="space-y-2">
+        <form onSubmit={handleSearch} className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
           <input
             type="text"
@@ -62,15 +74,23 @@ export default function Items() {
             className="w-full pl-9 pr-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-100 placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
           />
         </form>
-        <div className="relative">
-          <select
-            value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value)}
-            className="appearance-none bg-gray-900 border border-gray-700 text-gray-100 rounded-lg px-3 py-2 pr-8 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-          >
-            {TYPES.map(t => <option key={t} value={t}>{t === 'all' ? 'All types' : t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" size={14} />
+        <div className="flex flex-wrap gap-2">
+          {[
+            { value: typeFilter, onChange: setTypeFilter, options: TYPES.map(t => ({ value: t, label: t === 'all' ? 'All types' : t.charAt(0).toUpperCase() + t.slice(1) })) },
+            { value: levelFilter, onChange: setLevelFilter, options: LEVELS.map(l => ({ value: l, label: l === 'all' ? 'All levels' : l })) },
+            { value: accuracyFilter, onChange: setAccuracyFilter, options: ACCURACY.map(a => ({ value: a.value, label: a.label })) },
+          ].map((sel, i) => (
+            <div key={i} className="relative">
+              <select
+                value={sel.value}
+                onChange={e => sel.onChange(e.target.value)}
+                className="appearance-none bg-gray-900 border border-gray-700 text-gray-100 rounded-lg px-3 py-2 pr-8 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+              >
+                {sel.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" size={14} />
+            </div>
+          ))}
         </div>
       </div>
 

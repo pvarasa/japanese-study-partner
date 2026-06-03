@@ -74,7 +74,7 @@ jp_study_partner/
         │   └── Skeleton.jsx      # Shimmer skeleton primitives (Skeleton, SkeletonLine)
         └── pages/
             ├── Dashboard.jsx     # Stats, due items, weak areas, streak
-            ├── Items.jsx         # Library: search, filter, inline edit, delete
+            ├── Items.jsx         # Library: search, type/level/accuracy filters, inline edit, delete
             ├── Study.jsx         # Flashcards & AI-generated drills with SRS; example-sentence button
             ├── Reading.jsx       # AI reading practice with library + new vocabulary
             ├── Converse.jsx      # Conversation mode: tutor prompts, typed/spoken replies, corrections
@@ -134,7 +134,7 @@ Base URL: `http://localhost:8000/api`
 ### Items (`/api/items`)
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/items/` | List items. Query: `type`, `search`, `tag`, `limit`, `offset` |
+| GET | `/items/` | List items. Query: `type`, `search`, `tag`, `jlpt_level` (N1–N5), `accuracy` (`new`/`struggling`/`learning`/`strong`), `limit`, `offset` |
 | POST | `/items/` | Create item |
 | GET | `/items/{id}` | Get single item |
 | PUT | `/items/{id}` | Update item (partial) |
@@ -163,6 +163,7 @@ Base URL: `http://localhost:8000/api`
 | POST | `/generate/question` | AI-generated drill question. Query: `item_id`, `mode` (`fill_blank`/`sentence_build`/`grammar_drill`) |
 | POST | `/generate/example-sentence` | Generate a fresh example sentence for an item. Query: `item_id`. Returns `{japanese, english}`. Each call produces a different sentence. |
 | POST | `/generate/reading` | Generate reading passage using library words + new vocabulary. Form: `prompt` (optional topic guidance) |
+| POST | `/generate/evaluate` | AI evaluation of a sentence_build answer. Body: `{user_answer, expected_answer, prompt}`. Returns `{verdict: "correct"\|"partial"\|"incorrect", feedback, corrected}`. Accepts natural variations; provides specific feedback and a corrected version when the answer has errors. |
 
 ### Furigana (`/api/furigana`)
 | Method | Path | Description |
@@ -215,7 +216,7 @@ Ease factor is clamped to [1.3, 3.0]. Items are due when `srs_due <= now`, order
 1. **JP to EN Flashcard** - See Japanese, recall English meaning
 2. **EN to JP Flashcard** - See English, recall Japanese
 3. **Fill in the Blank** - AI generates a sentence with the target word blanked out, 4 multiple-choice options
-4. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input)
+4. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input). On submit, calls `/generate/evaluate` for AI assessment: **correct** (accepts natural variations), **almost there** (right idea, grammar/particle error — shows a corrected version), or **incorrect** (wrong meaning).
 
 Modes 1–4 use SRS rating after each card. Flashcard modes (1–2) include a **Generate example** button on reveal that calls `/generate/example-sentence` to produce a fresh AI-generated sentence with translation; press it multiple times for variety.
 

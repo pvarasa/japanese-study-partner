@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2, Eye, EyeOff } from 'lucide-react'
+import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
@@ -31,6 +31,8 @@ export default function Study() {
   const [generatingExample, setGeneratingExample] = useState(false)
   const [translationRevealed, setTranslationRevealed] = useState(false)
   const [hintsRevealed, setHintsRevealed] = useState(false)
+  const [evaluating, setEvaluating] = useState(false)
+  const [evaluation, setEvaluation] = useState(null)
   const [error, setError] = useState(null)
 
   const startStudy = async (m) => {
@@ -48,6 +50,14 @@ export default function Study() {
       setItems(due)
       setCurrent(0)
       setRevealed(false)
+      setUserAnswer('')
+      setAnswerChecked(false)
+      setGeneratedExample(null)
+      setGeneratingExample(false)
+      setTranslationRevealed(false)
+      setHintsRevealed(false)
+      setEvaluating(false)
+      setEvaluation(null)
       setDone(false)
       setSessionStats({ reviewed: 0, correct: 0 })
       const sess = await api.startSession(m)
@@ -98,6 +108,8 @@ export default function Study() {
       setGeneratingExample(false)
       setTranslationRevealed(false)
       setHintsRevealed(false)
+      setEvaluating(false)
+      setEvaluation(null)
       setError(null)
 
       if (mode === 'fill_blank' || mode === 'sentence_build') {
@@ -113,9 +125,19 @@ export default function Study() {
     }
   }
 
-  const checkAnswer = () => {
+  const checkAnswer = async () => {
     setAnswerChecked(true)
     setRevealed(true)
+    if (mode === 'sentence_build') {
+      setEvaluating(true)
+      try {
+        const result = await api.evaluateAnswer(userAnswer, question.answer, question.prompt)
+        setEvaluation(result)
+      } catch (err) {
+        setEvaluation({ verdict: 'incorrect', feedback: err.message || 'Could not evaluate answer.', corrected: null })
+      }
+      setEvaluating(false)
+    }
   }
 
   // Mode selection
@@ -384,9 +406,50 @@ export default function Study() {
             </div>
           )}
 
-          {answerChecked && (() => {
-            const isCorrect = userAnswer.trim() === question.answer.trim()
-              || question.options.length > 0 && userAnswer === question.answer
+          {answerChecked && mode === 'sentence_build' && (
+            evaluating ? (
+              <div className="border-t border-gray-700 pt-4 flex items-center gap-2 text-gray-500 text-sm">
+                <Loader2 size={15} className="animate-spin" /> Evaluating your answer…
+              </div>
+            ) : evaluation && (() => {
+              const { verdict, feedback, corrected } = evaluation
+              const isCorrect = verdict === 'correct'
+              const isPartial = verdict === 'partial'
+              return (
+                <div className={`border-t pt-4 space-y-2 ${isCorrect ? 'border-green-500/30' : isPartial ? 'border-yellow-500/30' : 'border-red-500/30'}`}>
+                  {isCorrect ? (
+                    <div className="flex items-center gap-2 text-green-400 font-medium">
+                      <CheckCircle size={18} /> Correct!
+                    </div>
+                  ) : isPartial ? (
+                    <div className="flex items-center gap-2 text-yellow-400 font-medium">
+                      <AlertCircle size={18} /> Almost there
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-red-400 font-medium">
+                      <X size={18} /> Incorrect
+                    </div>
+                  )}
+                  <div className="text-sm">
+                    <span className="text-gray-500">Your answer: </span>
+                    <Ruby text={userAnswer} className="text-gray-200" />
+                  </div>
+                  {feedback && <div className="text-sm text-gray-400">{feedback}</div>}
+                  {corrected && (
+                    <div className="text-sm">
+                      <span className="text-gray-500">Corrected: </span>
+                      <Ruby text={corrected} className="text-gray-200" />
+                    </div>
+                  )}
+                  <div className="text-sm text-gray-500">Reference answer:</div>
+                  <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
+                </div>
+              )
+            })()
+          )}
+
+          {answerChecked && mode !== 'sentence_build' && (() => {
+            const isCorrect = userAnswer === question.answer
             return (
               <div className={`border-t pt-4 space-y-2 ${isCorrect ? 'border-green-500/30' : 'border-red-500/30'}`}>
                 {isCorrect ? (
@@ -439,7 +502,7 @@ export default function Study() {
         </div>
       )}
 
-      {answerChecked && ratingButtons}
+      {answerChecked && (mode !== 'sentence_build' || evaluation) && ratingButtons}
     </div>
   )
 }

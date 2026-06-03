@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import Float, cast, or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -51,6 +51,8 @@ def list_items(
     type: str | None = None,
     search: str | None = None,
     tag: str | None = None,
+    jlpt_level: str | None = None,
+    accuracy: str | None = None,
     limit: int = Query(default=100, le=500),
     offset: int = 0,
     user_id: str = Depends(get_user_id),
@@ -68,6 +70,18 @@ def list_items(
         ))
     if tag:
         q = q.join(Item.tags).filter(Tag.name == tag.lower())
+    if jlpt_level:
+        q = q.filter(Item.jlpt_level == jlpt_level)
+    if accuracy:
+        acc = cast(Item.srs_correct, Float) / Item.srs_reviews
+        if accuracy == "new":
+            q = q.filter(Item.srs_reviews == 0)
+        elif accuracy == "struggling":
+            q = q.filter(Item.srs_reviews > 0, acc < 0.6)
+        elif accuracy == "learning":
+            q = q.filter(Item.srs_reviews > 0, acc >= 0.6, acc < 0.85)
+        elif accuracy == "strong":
+            q = q.filter(Item.srs_reviews > 0, acc >= 0.85)
     q = q.order_by(Item.created_at.desc())
     items = q.offset(offset).limit(limit).all()
     return [_item_to_out(i) for i in items]

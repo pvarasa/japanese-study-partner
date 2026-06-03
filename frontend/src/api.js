@@ -68,6 +68,8 @@ export const api = {
     request(`/generate/example-sentence?item_id=${itemId}`, { method: 'POST' }),
   generateReading: (prompt) =>
     request('/generate/reading', { method: 'POST', body: form({ prompt }) }),
+  evaluateAnswer: (userAnswer, expectedAnswer, prompt) =>
+    request('/generate/evaluate', { method: 'POST', body: { user_answer: userAnswer, expected_answer: expectedAnswer, prompt } }),
 
   // Features
   getFeatures: () => request('/features'),

@@ -86,13 +86,13 @@ def get_dashboard(
     streak = 0
     check_date = today_start
     while True:
-        day_sessions = db.query(StudySession).filter(
+        day_session = db.query(StudySession).filter(
             StudySession.user_id == user_id,
             StudySession.started_at >= check_date,
             StudySession.started_at < check_date + timedelta(days=1),
             StudySession.items_reviewed > 0,
         ).first()
-        if day_sessions:
+        if day_session:
             streak += 1
             check_date -= timedelta(days=1)
         else:
