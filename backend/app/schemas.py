@@ -52,11 +52,6 @@ class SRSReview(BaseModel):
     rating: Literal["again", "hard", "good"]
 
 
-class IngestRequest(BaseModel):
-    content: str  # raw text, URL, or "uploaded file" marker
-    type: str  # text, url, pdf
-
-
 class IngestItem(BaseModel):
     type: str
     japanese: str

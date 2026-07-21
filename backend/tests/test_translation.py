@@ -31,7 +31,7 @@ def _ok_response(body: dict) -> httpx.Response:
 def test_provider_defaults_to_anthropic(monkeypatch):
     monkeypatch.delenv("TRANSLATION_PROVIDER", raising=False)
     assert translation.get_provider() == "anthropic"
-    assert translation.get_model() == "claude-sonnet-4-6"
+    assert translation.get_model() == "claude-sonnet-5"
 
 
 def test_ollama_word_lookup_parses_json(use_ollama, monkeypatch):

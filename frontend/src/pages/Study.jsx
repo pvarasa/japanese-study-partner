@@ -10,10 +10,16 @@ const MODES = [
   { id: 'flashcard_en', label: 'EN → JP', desc: 'See English, recall Japanese' },
   { id: 'fill_blank', label: 'Fill Blank', desc: 'Complete the sentence' },
   { id: 'sentence_build', label: 'Build Sentence', desc: 'Translate to Japanese' },
+  { id: 'grammar_drill', label: 'Grammar Drill', desc: 'Choose the correct usage' },
 ]
+
+// Modes whose questions are generated on demand by the AI (vs. plain flashcards).
+const GENERATED_MODES = ['fill_blank', 'sentence_build', 'grammar_drill']
 
 // Fallback when the generate request fails without a server-provided detail.
 const QUESTION_ERROR = 'Failed to load this question. Please try again.'
+// Fallback when submitting a review rating fails.
+const RATE_ERROR = 'Failed to save your review. Please try again.'
 
 export default function Study() {
   const [mode, setMode] = useState(null)
@@ -63,7 +69,7 @@ export default function Study() {
       const sess = await api.startSession(m)
       setSessionId(sess.session_id)
 
-      if (m === 'fill_blank' || m === 'sentence_build') {
+      if (GENERATED_MODES.includes(m)) {
         const q = await api.generateQuestion(due[0].id, m)
         setQuestion(q)
       }
@@ -88,7 +94,14 @@ export default function Study() {
 
   const handleRate = async (rating) => {
     const item = items[current]
-    await api.reviewItem(item.id, rating)
+    setError(null)
+    try {
+      await api.reviewItem(item.id, rating)
+    } catch (err) {
+      // Keep the card in place so the user can retry the same rating.
+      setError(err.message || RATE_ERROR)
+      return
+    }
     const stats = {
       reviewed: sessionStats.reviewed + 1,
       correct: sessionStats.correct + (rating !== 'again' ? 1 : 0),
@@ -96,7 +109,10 @@ export default function Study() {
     setSessionStats(stats)
 
     if (current + 1 >= items.length) {
-      if (sessionId) await api.endSession(sessionId, stats.reviewed, stats.correct)
+      // Session-end bookkeeping failing shouldn't block the completion screen.
+      try {
+        if (sessionId) await api.endSession(sessionId, stats.reviewed, stats.correct)
+      } catch { /* ignore — stats just won't be recorded for this session */ }
       setDone(true)
     } else {
       setCurrent(current + 1)
@@ -112,7 +128,7 @@ export default function Study() {
       setEvaluation(null)
       setError(null)
 
-      if (mode === 'fill_blank' || mode === 'sentence_build') {
+      if (GENERATED_MODES.includes(mode)) {
         setLoading(true)
         try {
           const q = await api.generateQuestion(items[current + 1].id, mode)
@@ -217,7 +233,13 @@ export default function Study() {
   const examples = item.example_sentences ? JSON.parse(item.example_sentences) : []
 
   const ratingButtons = (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="space-y-2">
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+          <AlertCircle size={15} /> {error}
+        </div>
+      )}
+      <div className="grid grid-cols-3 gap-2">
       <button onClick={() => handleRate('again')}
         className="bg-red-500/15 text-red-400 border border-red-500/30 py-3 rounded-xl font-medium hover:bg-red-500/25 transition-colors">
         <RotateCcw className="inline mr-1" size={16} /> Again
@@ -230,6 +252,7 @@ export default function Study() {
         className="bg-green-500/15 text-green-400 border border-green-500/30 py-3 rounded-xl font-medium hover:bg-green-500/25 transition-colors">
         <ArrowRight className="inline mr-1" size={16} /> Good
       </button>
+      </div>
     </div>
   )
 
@@ -318,7 +341,11 @@ export default function Study() {
       {question ? (
         <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-4">
           <div className="text-sm text-gray-500 uppercase font-medium">
-            {mode === 'fill_blank' ? 'Fill in the blank' : 'Translate to Japanese'}
+            {mode === 'sentence_build'
+              ? 'Translate to Japanese'
+              : mode === 'grammar_drill'
+                ? 'Choose the correct usage'
+                : 'Fill in the blank'}
           </div>
 
           {mode === 'sentence_build' ? (

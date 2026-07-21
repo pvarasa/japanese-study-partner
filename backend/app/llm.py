@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 log = logging.getLogger("app.llm")
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5"
 
 _BUSY_MSG = "The AI service is busy right now. Please try again in a moment."
 _TIMEOUT_MSG = "The AI service did not respond in time. Please try again."
@@ -73,6 +73,10 @@ def call_claude(client: Anthropic, *, retry_on_overload: bool = True, **kwargs) 
     user-facing ``detail`` and a compact log line — no stack trace for transient
     upstream issues. Overload (HTTP 529) gets a single retry by default.
     """
+    # Sonnet 5 runs adaptive thinking by default when `thinking` is omitted. These
+    # are all small, structured-JSON calls where thinking only adds latency and
+    # cost (and eats into max_tokens), so disable it unless a caller opts in.
+    kwargs.setdefault("thinking", {"type": "disabled"})
     attempts = 2 if retry_on_overload else 1
     for attempt in range(1, attempts + 1):
         try:

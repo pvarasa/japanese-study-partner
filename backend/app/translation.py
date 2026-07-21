@@ -8,8 +8,9 @@ import os
 
 import httpx
 from fastapi import HTTPException
+from fastapi.concurrency import run_in_threadpool
 
-from .llm import call_claude, get_anthropic_client, parse_json_response
+from .llm import DEFAULT_MODEL, call_claude, get_anthropic_client, parse_json_response
 
 log = logging.getLogger("app.translation")
 
@@ -29,7 +30,7 @@ def get_model() -> str:
     """Identifier for the active model — used as a cache-key component."""
     if get_provider() == "ollama":
         return os.environ.get("OLLAMA_TRANSLATION_MODEL", DEFAULT_OLLAMA_MODEL)
-    return "claude-sonnet-4-6"
+    return DEFAULT_MODEL
 
 
 def _build_prompt(surface: str, lemma: str, context: str, is_phrase: bool) -> str:
@@ -64,14 +65,16 @@ async def translate_lookup(
     prompt = _build_prompt(surface, lemma, context, is_phrase)
     if get_provider() == "ollama":
         return await _translate_ollama(prompt)
-    return _translate_anthropic(prompt)
+    # The Anthropic SDK is synchronous; run it off the event loop so a lookup
+    # doesn't block every other in-flight request while Claude responds.
+    return await run_in_threadpool(_translate_anthropic, prompt)
 
 
 def _translate_anthropic(prompt: str) -> dict:
     client = get_anthropic_client()
     message = call_claude(
         client,
-        model="claude-sonnet-4-6",
+        model=DEFAULT_MODEL,
         max_tokens=200,
         messages=[{"role": "user", "content": prompt}],
     )

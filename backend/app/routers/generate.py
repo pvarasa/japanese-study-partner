@@ -215,7 +215,9 @@ def generate_reading(
                 library_words=library_words,
                 topic_instruction=topic_instruction,
             ),
-            max_tokens=2048,
+            # Headroom for Sonnet 5's tokenizer (~30% more tokens than Sonnet 4.6)
+            # so a full-length passage + translation + word list isn't truncated.
+            max_tokens=3072,
         )
 
         # Build lookup of library items for matching

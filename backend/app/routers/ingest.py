@@ -1,7 +1,9 @@
 import json
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -58,13 +60,27 @@ def _extract_with_llm(text: str, level: str) -> dict:
     return complete_json(f"{prompt}\n\n---\n\n{text[:8000]}", max_tokens=4096)
 
 
+def _extract_pdf(content: bytes, level: str) -> dict:
+    """Parse PDF bytes and run extraction. Blocking — call via threadpool."""
+    import io
+
+    import pdfplumber
+    text_parts = []
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        for page in pdf.pages[:20]:  # limit to 20 pages
+            text_parts.append(page.extract_text() or "")
+    return _extract_with_llm("\n".join(text_parts), level)
+
+
 @router.post("/text", response_model=IngestResponse)
-async def ingest_text(
+def ingest_text(
     content: str = Form(...),
     user_id: str = Depends(get_user_id),
     db: Session = Depends(get_db),
 ):
     """Ingest raw Japanese text."""
+    # Plain def so FastAPI runs the blocking Claude extraction in a threadpool
+    # instead of on the event loop, where it would freeze every other request.
     result = _extract_with_llm(content, get_jlpt_level(db, user_id))
     return IngestResponse(
         source_title=result.get("title", "Text input"),
@@ -80,7 +96,8 @@ async def ingest_url(
 ):
     """Ingest content from a URL."""
     text = await _fetch_url(url)
-    result = _extract_with_llm(text, get_jlpt_level(db, user_id))
+    level = get_jlpt_level(db, user_id)
+    result = await run_in_threadpool(_extract_with_llm, text, level)
     return IngestResponse(
         source_title=result.get("title", url),
         items=[IngestItem(**item) for item in result.get("items", [])],
@@ -94,16 +111,9 @@ async def ingest_pdf(
     db: Session = Depends(get_db),
 ):
     """Ingest content from a PDF."""
-    import io
-
-    import pdfplumber
     content = await file.read()
-    text_parts = []
-    with pdfplumber.open(io.BytesIO(content)) as pdf:
-        for page in pdf.pages[:20]:  # limit to 20 pages
-            text_parts.append(page.extract_text() or "")
-    text = "\n".join(text_parts)
-    result = _extract_with_llm(text, get_jlpt_level(db, user_id))
+    level = get_jlpt_level(db, user_id)
+    result = await run_in_threadpool(_extract_pdf, content, level)
     return IngestResponse(
         source_title=result.get("title", file.filename or "PDF"),
         items=[IngestItem(**item) for item in result.get("items", [])],
@@ -111,7 +121,7 @@ async def ingest_pdf(
 
 
 @router.post("/save")
-async def save_ingested(
+def save_ingested(
     source_title: str = Form(...),
     source_type: str = Form(...),
     source_url: str = Form(None),
@@ -120,15 +130,31 @@ async def save_ingested(
     db: Session = Depends(get_db),
 ):
     """Save reviewed/edited ingested items to the database."""
+    try:
+        raw_items = json.loads(items_json)
+    except json.JSONDecodeError as e:
+        raise HTTPException(422, f"items_json is not valid JSON: {e}")
+
+    # Validate each item through IngestItem so unexpected keys are dropped
+    # (rather than crashing Item(**...) with a 500) and missing required
+    # fields surface as a clean 422.
+    try:
+        parsed_items = [IngestItem(**item) for item in raw_items]
+    except (ValidationError, TypeError) as e:
+        raise HTTPException(422, f"Invalid item data: {e}")
+
     source = Source(user_id=user_id, title=source_title, type=source_type, url=source_url)
     db.add(source)
     db.flush()
 
-    items_data = json.loads(items_json)
     saved = []
-    for item_data in items_data:
-        tags = _get_or_create_tags(db, item_data.pop("tags", []))
-        item = Item(user_id=user_id, source_id=source.id, **item_data)
+    for parsed in parsed_items:
+        tags = _get_or_create_tags(db, parsed.tags)
+        item = Item(
+            user_id=user_id,
+            source_id=source.id,
+            **parsed.model_dump(exclude={"tags"}),
+        )
         item.tags = tags
         db.add(item)
         saved.append(item)

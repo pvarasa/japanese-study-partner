@@ -7,6 +7,7 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 import asyncio
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,15 +22,18 @@ from .translation import prewarm as prewarm_translation
 if not os.environ.get("DATABASE_URL"):
     Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="日本語 Study Partner", version="0.1.0")
 
-
-@app.on_event("startup")
-async def _startup_prewarm() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     # Kick off the Ollama model load in the background so it doesn't block
     # uvicorn from accepting connections. The first user lookup will join the
-    # in-flight load if it isn't done yet.
-    asyncio.create_task(prewarm_translation())
+    # in-flight load if it isn't done yet. Hold a reference on app.state so the
+    # task isn't garbage-collected mid-flight.
+    app.state.prewarm_task = asyncio.create_task(prewarm_translation())
+    yield
+
+
+app = FastAPI(title="日本語 Study Partner", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -56,7 +56,12 @@ def get_dashboard(
 ):
     """Get dashboard stats."""
     now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Today" and the streak follow the server's local calendar day, not UTC.
+    # We compute the local midnight boundary and express it as a UTC instant so
+    # it compares correctly against the UTC-stored timestamps.
+    local_now = datetime.now().astimezone()
+    today_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_start_local.astimezone(timezone.utc)
 
     total_items = db.query(func.count(Item.id)).filter(Item.user_id == user_id).scalar()
     due_today = db.query(func.count(Item.id)).filter(
@@ -84,17 +89,19 @@ def get_dashboard(
     ).limit(10).all()
 
     streak = 0
-    check_date = today_start
+    day_start_local = today_start_local
     while True:
+        day_start = day_start_local.astimezone(timezone.utc)
+        day_end = (day_start_local + timedelta(days=1)).astimezone(timezone.utc)
         day_session = db.query(StudySession).filter(
             StudySession.user_id == user_id,
-            StudySession.started_at >= check_date,
-            StudySession.started_at < check_date + timedelta(days=1),
+            StudySession.started_at >= day_start,
+            StudySession.started_at < day_end,
             StudySession.items_reviewed > 0,
         ).first()
         if day_session:
             streak += 1
-            check_date -= timedelta(days=1)
+            day_start_local -= timedelta(days=1)
         else:
             break
 

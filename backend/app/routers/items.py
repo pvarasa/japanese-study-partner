@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Float, cast, or_
+from sqlalchemy import Float, cast, func, or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -73,7 +73,11 @@ def list_items(
     if jlpt_level:
         q = q.filter(Item.jlpt_level == jlpt_level)
     if accuracy:
-        acc = cast(Item.srs_correct, Float) / Item.srs_reviews
+        # nullif() makes the divisor NULL (not 0) for never-reviewed items, so
+        # the division yields NULL instead of raising division_by_zero on
+        # PostgreSQL, which doesn't guarantee the srs_reviews > 0 clause is
+        # evaluated first.
+        acc = cast(Item.srs_correct, Float) / func.nullif(Item.srs_reviews, 0)
         if accuracy == "new":
             q = q.filter(Item.srs_reviews == 0)
         elif accuracy == "struggling":

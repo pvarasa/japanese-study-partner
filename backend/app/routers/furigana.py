@@ -1,3 +1,4 @@
+import html
 import unicodedata
 
 import fugashi
@@ -19,8 +20,12 @@ def _get_tagger():
 
 
 def _kata_to_hira(text: str) -> str:
+    # Only the U+30A1–U+30F6 block has 1:1 hiragana counterparts (offset 0x60).
+    # Matching on "KATAKANA" in the char name would also catch ー (prolonged
+    # sound mark) and ・ (middle dot), which have no hiragana form and would be
+    # mangled into stray diacritics.
     return "".join(
-        chr(ord(c) - 0x60) if "KATAKANA" in unicodedata.name(c, "") else c
+        chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c
         for c in text
     )
 
@@ -40,12 +45,15 @@ def annotate(text: str) -> str:
         # English/mixed prompts (e.g. sentence-build questions) readable.
         parts.append(getattr(w, "white_space", "") or "")
         kana = w.feature.kana
+        # Escape token text before it goes into HTML that the frontend renders
+        # via dangerouslySetInnerHTML — ingested pages can contain raw markup.
+        surface = html.escape(w.surface)
         if kana and _has_kanji(w.surface):
             hira = _kata_to_hira(kana)
             if hira != w.surface:
-                parts.append(f"<ruby>{w.surface}<rt>{hira}</rt></ruby>")
+                parts.append(f"<ruby>{surface}<rt>{html.escape(hira)}</rt></ruby>")
                 continue
-        parts.append(w.surface)
+        parts.append(surface)
     return "".join(parts)
 
 

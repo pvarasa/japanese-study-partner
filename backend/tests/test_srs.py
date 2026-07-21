@@ -1,8 +1,9 @@
 """Unit tests for the SRS algorithm."""
 from datetime import datetime, timedelta, timezone
 
-from app.models import Item
 import pytest
+
+from app.models import Item
 from app.srs import HARD_INTERVAL, MIN_INTERVAL, process_review
 
 
