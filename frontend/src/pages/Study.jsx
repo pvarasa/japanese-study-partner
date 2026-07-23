@@ -256,6 +256,37 @@ export default function Study() {
     </div>
   )
 
+  // AI-question modes (fill_blank, grammar_drill, sentence_build) have an
+  // objectively correct answer, so the SRS rating is derived from correctness
+  // instead of asking the learner to self-grade.
+  const derivedRating = mode === 'sentence_build'
+    ? (evaluation?.verdict === 'correct' ? 'good' : evaluation?.verdict === 'partial' ? 'hard' : 'again')
+    : (question && userAnswer === question.answer ? 'good' : 'again')
+
+  const RATING_LABEL = { good: 'Good', hard: 'Hard', again: 'Again' }
+  const RATING_COLOR = { good: 'text-green-400', hard: 'text-orange-400', again: 'text-red-400' }
+
+  const continueControl = (
+    <div className="space-y-2">
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+          <AlertCircle size={15} /> {error}
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-gray-500">
+          Scheduled as <span className={RATING_COLOR[derivedRating]}>{RATING_LABEL[derivedRating]}</span>
+        </span>
+        <button
+          onClick={() => handleRate(derivedRating)}
+          className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-500 flex items-center gap-1.5"
+        >
+          Next <ArrowRight size={16} />
+        </button>
+      </div>
+    </div>
+  )
+
   // Flashcard modes
   if (mode === 'flashcard_jp' || mode === 'flashcard_en') {
     const isJpToEn = mode === 'flashcard_jp'
@@ -529,7 +560,7 @@ export default function Study() {
         </div>
       )}
 
-      {answerChecked && (mode !== 'sentence_build' || evaluation) && ratingButtons}
+      {answerChecked && (mode !== 'sentence_build' || evaluation) && continueControl}
     </div>
   )
 }
