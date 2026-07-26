@@ -38,8 +38,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # npm install, not npm ci: package-lock.json is out of sync with
+      # package.json (stale @emnapi/* transitive deps), so `npm ci` fails on
+      # Linux. Regenerate the lockfile before tightening this.
       - name: Install frontend deps
-        run: npm ci
+        run: npm install
         working-directory: frontend
 
       - name: ESLint
