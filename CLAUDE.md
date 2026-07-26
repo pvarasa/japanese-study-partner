@@ -35,6 +35,10 @@ cd backend && uv run python -c "from app.main import app; print('OK')"
 # Run backend tests
 cd backend && uv run pytest
 
+# Backfill missing usage notes / example sentences (one Claude call per item)
+cd backend && uv run python -m scripts.backfill_enrich --dry-run
+cd backend && uv run python -m scripts.backfill_enrich
+
 # Build frontend
 cd frontend && npx vite build
 
@@ -58,9 +62,14 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 ## Key Files
 
 - `backend/app/main.py` — App entry, loads `.env` from project root, mounts routers, serves static frontend in production, exposes `/api/features`. On startup fires a background `prewarm()` against Ollama when `TRANSLATION_PROVIDER=ollama` so the first lookup is warm.
+- `backend/app/llm.py` — Anthropic client construction, `call_claude` (maps SDK errors to friendly HTTPExceptions, retries on 529), `complete_json`, and the `ai_response(...)` context manager. **Wrap any block that consumes model output in `ai_response`** — it turns a malformed reply (bad JSON, missing key, failed validation) into a 502 with a user-facing message instead of a bare 500, while letting existing HTTPExceptions through untouched.
 - `backend/app/database.py` — SQLAlchemy engine: PostgreSQL if `DATABASE_URL` is set, otherwise SQLite with Windows path normalization
-- `backend/app/models.py` — SQLAlchemy models: Item (word/grammar/expression with SRS fields), Tag, Source, Setting (per-user key/value), StudySession; all data tables carry `user_id`
-- `backend/app/deps.py` — FastAPI dependency `get_user_id`: reads `X-User-ID` header, defaults to `"default"` for single-user use
+- `backend/app/models.py` — SQLAlchemy models: Item (word/grammar/expression with SRS fields), Tag, Source, Setting (per-user key/value), StudySession. All carry `user_id` **except `Tag`**, which is a globally shared namespace (items are still user-scoped, so this leaks no data — but tag names are common to all users)
+- `backend/app/deps.py` — FastAPI dependencies: `get_user_id` (reads `X-User-ID`, defaults to `"default"`), `require_item` (resolves `item_id` to a caller-owned Item or 404s), plus the `Db` / `UserId` / `OwnedItem` annotated aliases used across routers
+- `backend/app/levels.py` — JLPT level constants (`VALID_LEVELS`, `LEVEL_DESCRIPTOR`, `READING_LENGTH`, `NEW_WORD_TIER`) and `get_jlpt_level(db, user_id)`. Lives outside `routers/` so ingest/generate/converse don't depend on the settings *router*
+- `backend/app/crud.py` — Shared data access with no HTTP knowledge: `get_item_for_user`, `get_or_create_tags`
+- `backend/app/enrich.py` — Generates the `notes` + `example_sentences` that only the ingest path used to produce. Shared by `POST /api/items/?enrich=true` and `scripts/backfill_enrich.py` so the two can't drift
+- `backend/scripts/backfill_enrich.py` — One-off backfill for items missing notes/examples. `uv run python -m scripts.backfill_enrich --dry-run` to preview; backs up SQLite and commits per item, so it's safe to re-run and resumes after an interruption
 - `backend/app/srs.py` — Spaced repetition logic (again/hard/good ratings)
 - `backend/app/routers/items.py` — CRUD for study items; `GET /items/` supports `type`, `search`, `tag`, `jlpt_level`, and `accuracy` (`new`/`struggling`/`learning`/`strong`) filters
 - `backend/app/routers/study.py` — Due items, review submission, dashboard stats, session tracking
@@ -68,7 +77,7 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - `backend/app/routers/generate.py` — AI question generation (fill_blank, sentence_build, grammar_drill), on-demand example sentences, reading passages, and `/evaluate` for AI-assessed sentence_build answers (verdict + feedback + corrected version); all JLPT-level-aware
 - `backend/app/routers/furigana.py` — Furigana annotation endpoint using fugashi tokenizer; `lookup_word` delegates to `app.translation`
 - `backend/app/translation.py` — Pluggable JP→EN translation lookup; dispatches to Claude or a local Ollama server based on `TRANSLATION_PROVIDER`
-- `backend/app/routers/settings.py` — JLPT level setting + per-level prompt tuning (descriptor, reading length, new-word tier); exposes `get_jlpt_level(db, user_id)` used by ingest/generate/converse
+- `backend/app/routers/settings.py` — JLPT level read/write endpoints only; the level constants and `get_jlpt_level` live in `app/levels.py`
 - `backend/app/routers/transcribe.py` — Local faster-whisper transcription; lazy singleton with auto device/compute-type detection; gated by `WHISPER_ENABLED` env var
 - `backend/app/routers/converse.py` — Conversation tutor: `/start` opens a level-appropriate question, `/reply` returns corrections + natural rewrite + follow-up
 - `backend/alembic/` — Alembic migration environment; `env.py` uses `app.database.engine` directly so it inherits the same DB config as the app
@@ -92,6 +101,10 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 ## Gotchas
 
 - SQLite path uses forward-slash normalization for Windows compatibility (`database.py`)
+- `require_item` binds `item_id` from the **path** on `/items/{item_id}` and from the **query string** on `/generate/*` — FastAPI resolves it either way from the dependency's parameter name. `/study/review` can't use it because `item_id` arrives in the JSON body; it calls `get_item_for_user` directly
+- Dashboard `accuracy_today` only counts sessions whose `mode` is in `study.GRADED_MODES`. Conversation practice has no right/wrong answer, so including it pinned accuracy near 100%. Converse still records turns (so it counts toward `studied_today` and the streak) and reports turns-with-no-corrections as `items_correct`. **Add any new study mode to `GRADED_MODES` if its answers are graded**
+- Only the ingest path generates `notes`/`example_sentences`. `POST /api/items/` stores exactly what it's given unless `?enrich=true`, which the Reading page's "Add to library" now passes. Enrichment failure is non-fatal — the item still saves, bare, and the backfill script can pick it up later
+- `example_sentences` is an LLM-authored JSON string in a text column with no DB-level validation. `IngestItem` coerces the array form the model often returns, and the frontend parses it defensively (`parseExamples` in `Study.jsx`) — don't reintroduce a bare `JSON.parse` on it
 - `create_all()` only runs when `DATABASE_URL` is not set (SQLite path); PostgreSQL schema is managed by Alembic
 - `.env` is loaded from project root (`../../.env` relative to `app/main.py`), not from `backend/`; in Docker the file won't exist and env vars come from the container environment directly
 - Vite dev server proxies `/api` to `http://localhost:8000` — in production, backend serves frontend static files from `frontend/dist/`

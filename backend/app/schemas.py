@@ -1,7 +1,8 @@
+import json
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class ItemCreate(BaseModel):
@@ -46,6 +47,18 @@ class ItemOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _flatten_tags(cls, v):
+        """Accept the ORM's list[Tag] as well as a plain list[str].
+
+        Lets routers use ``ItemOut.model_validate(item)`` directly instead of
+        hand-copying every column, which used to drift whenever one was added.
+        """
+        if v is None:
+            return []
+        return [t.name if hasattr(t, "name") else t for t in v]
+
 
 class SRSReview(BaseModel):
     item_id: int
@@ -61,6 +74,21 @@ class IngestItem(BaseModel):
     example_sentences: Optional[str] = None
     jlpt_level: Optional[str] = None
     tags: list[str] = []
+
+    @field_validator("example_sentences", mode="before")
+    @classmethod
+    def _serialise_examples(cls, v):
+        """Accept the array form the model often returns instead of a JSON string.
+
+        The extraction prompt asks for a JSON *string* nested inside a JSON
+        object, which models routinely flatten into a real array. Both forms
+        mean the same thing, so normalise rather than 422 the whole import.
+        """
+        if v is None or isinstance(v, str):
+            return v
+        if isinstance(v, (list, dict)):
+            return json.dumps(v, ensure_ascii=False)
+        return str(v)
 
 
 class IngestResponse(BaseModel):

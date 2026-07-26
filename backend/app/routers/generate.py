@@ -1,26 +1,16 @@
-import logging
 import random
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from ..database import get_db
-from ..deps import get_user_id
-from ..llm import complete_json
+from ..deps import Db, OwnedItem, UserId
+from ..levels import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
+from ..llm import ai_response, complete_json
 from ..models import Item
 from ..schemas import ExampleSentence, ReadingPassage, ReadingWord, StudyQuestion, VocabHint
-from .settings import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
-
-log = logging.getLogger("app.generate")
-
-# Shown to the user when the model call succeeds but the response can't be
-# parsed/shaped into what we need (bad JSON, missing keys, etc.). call_claude
-# already maps upstream API failures to friendly messages of their own.
-_BAD_RESPONSE_MSG = "Couldn't generate this — the AI returned an unexpected response. Please try again."
 
 QUESTION_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
 
@@ -50,18 +40,9 @@ Return ONLY valid JSON."""
 
 
 @router.post("/question", response_model=StudyQuestion)
-def generate_question(
-    item_id: int,
-    mode: str,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
-    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
-    if not item:
-        raise HTTPException(404, "Item not found")
-
+def generate_question(item: OwnedItem, mode: str, user_id: UserId, db: Db):
     level = get_jlpt_level(db, user_id)
-    try:
+    with ai_response("generate_question", item_id=item.id, mode=mode):
         data = complete_json(
             QUESTION_PROMPT.format(
                 level=level,
@@ -97,11 +78,6 @@ def generate_question(
             translation=data.get("translation"),
             vocabulary=vocabulary,
         )
-    except HTTPException:
-        raise
-    except Exception:
-        log.exception("generate_question failed (item_id=%s, mode=%s)", item_id, mode)
-        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)
 
 
 EXAMPLE_SENTENCE_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
@@ -126,17 +102,9 @@ Return ONLY valid JSON."""
 
 
 @router.post("/example-sentence", response_model=ExampleSentence)
-def generate_example_sentence(
-    item_id: int,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
-    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
-    if not item:
-        raise HTTPException(404, "Item not found")
-
+def generate_example_sentence(item: OwnedItem, user_id: UserId, db: Db):
     level = get_jlpt_level(db, user_id)
-    try:
+    with ai_response("generate_example_sentence", item_id=item.id):
         data = complete_json(
             EXAMPLE_SENTENCE_PROMPT.format(
                 level=level,
@@ -150,11 +118,6 @@ def generate_example_sentence(
             max_tokens=256,
         )
         return ExampleSentence(japanese=data["japanese"], english=data["english"])
-    except HTTPException:
-        raise
-    except Exception:
-        log.exception("generate_example_sentence failed (item_id=%s)", item_id)
-        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)
 
 
 READING_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
@@ -185,11 +148,7 @@ Return ONLY valid JSON, no markdown fences."""
 
 
 @router.post("/reading", response_model=ReadingPassage)
-def generate_reading(
-    prompt: Optional[str] = Form(None),
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def generate_reading(user_id: UserId, db: Db, prompt: Optional[str] = Form(None)):
     items = db.query(Item).filter(Item.user_id == user_id).all()
     if not items:
         raise HTTPException(400, "No items in library yet")
@@ -205,7 +164,7 @@ def generate_reading(
         topic_instruction = f"TOPIC GUIDANCE: The learner wants the passage to be about: {prompt}"
 
     level = get_jlpt_level(db, user_id)
-    try:
+    with ai_response("generate_reading", user_id=user_id):
         data = complete_json(
             READING_PROMPT.format(
                 level=level,
@@ -238,11 +197,6 @@ def generate_reading(
             words=words,
             translation=data.get("translation", ""),
         )
-    except HTTPException:
-        raise
-    except Exception:
-        log.exception("generate_reading failed (user_id=%s)", user_id)
-        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)
 
 
 EVALUATE_PROMPT = """You are a Japanese language teacher evaluating a student's translation exercise.
@@ -275,12 +229,8 @@ class EvaluateOut(BaseModel):
 
 
 @router.post("/evaluate", response_model=EvaluateOut)
-def evaluate_answer(
-    data: EvaluateIn,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
-    try:
+def evaluate_answer(data: EvaluateIn, user_id: UserId, db: Db):
+    with ai_response("evaluate_answer"):
         result = complete_json(
             EVALUATE_PROMPT.format(
                 prompt=data.prompt,
@@ -294,8 +244,3 @@ def evaluate_answer(
             feedback=result.get("feedback", ""),
             corrected=result.get("corrected"),
         )
-    except HTTPException:
-        raise
-    except Exception:
-        log.exception("evaluate_answer failed")
-        raise HTTPException(status_code=502, detail=_BAD_RESPONSE_MSG)

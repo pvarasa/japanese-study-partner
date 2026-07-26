@@ -30,7 +30,10 @@ export const api = {
   // Items
   getItems: (params = {}) => request(`/items/?${qs(params)}`),
   getItem: (id) => request(`/items/${id}`),
-  createItem: (data) => request('/items/', { method: 'POST', body: data }),
+  // enrich=true has the server generate usage notes + example sentences at save
+  // time, so the item matches what the import flow produces. Costs one AI call.
+  createItem: (data, { enrich = false } = {}) =>
+    request(`/items/${enrich ? '?enrich=true' : ''}`, { method: 'POST', body: data }),
   updateItem: (id, data) => request(`/items/${id}`, { method: 'PUT', body: data }),
   deleteItem: (id) => request(`/items/${id}`, { method: 'DELETE' }),
 

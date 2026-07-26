@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from anthropic import (
@@ -21,6 +23,36 @@ DEFAULT_MODEL = "claude-sonnet-5"
 _BUSY_MSG = "The AI service is busy right now. Please try again in a moment."
 _TIMEOUT_MSG = "The AI service did not respond in time. Please try again."
 _API_ERROR_MSG = "The AI service returned an error. Please try again later."
+
+# Shown when the model call succeeds but the reply can't be parsed or shaped
+# into what the endpoint needs (bad JSON, missing keys, wrong value types).
+# call_claude already maps upstream API failures to messages of their own.
+BAD_RESPONSE_MSG = "Couldn't generate this — the AI returned an unexpected response. Please try again."
+
+
+@contextmanager
+def ai_response(operation: str, **context: Any) -> Iterator[None]:
+    """Translate a malformed/unusable model reply into a friendly HTTP 502.
+
+    Wrap the parse-and-build block of any endpoint that consumes model output::
+
+        with ai_response("generate_question", item_id=item_id):
+            data = complete_json(prompt, max_tokens=1024)
+            return StudyQuestion(prompt=data["prompt"], ...)
+
+    HTTPExceptions raised inside (including the ones call_claude produces for
+    upstream failures) pass through untouched; anything else — JSONDecodeError,
+    KeyError, ValidationError — is logged with a traceback and reported as 502
+    so the caller never sees a bare 500.
+    """
+    try:
+        yield
+    except HTTPException:
+        raise
+    except Exception:
+        details = ", ".join(f"{k}={v!r}" for k, v in context.items())
+        log.exception("%s failed%s", operation, f" ({details})" if details else "")
+        raise HTTPException(status_code=502, detail=BAD_RESPONSE_MSG) from None
 
 
 def get_anthropic_client() -> Anthropic:

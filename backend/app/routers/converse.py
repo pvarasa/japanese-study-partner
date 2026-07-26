@@ -1,14 +1,12 @@
 import random
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from ..database import get_db
-from ..deps import get_user_id
-from ..llm import complete_json
+from ..deps import Db, UserId
+from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
+from ..llm import ai_response, complete_json
 from ..models import Item
-from .settings import LEVEL_DESCRIPTOR, get_jlpt_level
 
 router = APIRouter(prefix="/api/converse", tags=["converse"])
 
@@ -83,10 +81,7 @@ class ReplyOut(BaseModel):
 
 
 @router.post("/start", response_model=StartOut)
-def start_conversation(
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def start_conversation(user_id: UserId, db: Db):
     level = get_jlpt_level(db, user_id)
     items = db.query(Item).filter(Item.user_id == user_id).all()
     sample = random.sample(items, min(len(items), 8)) if items else []
@@ -94,27 +89,24 @@ def start_conversation(
         f"- {it.japanese} ({it.reading}): {it.meaning}" for it in sample
     ) or "(library empty)"
 
-    data = complete_json(
-        START_PROMPT.format(
-            level=level,
-            descriptor=LEVEL_DESCRIPTOR[level],
-            library_words=library_words,
-        ),
-        max_tokens=512,
-    )
-    return StartOut(
-        topic=data.get("topic", "conversation"),
-        question=data["question"],
-        english_hint=data.get("english_hint", ""),
-    )
+    with ai_response("converse_start", user_id=user_id):
+        data = complete_json(
+            START_PROMPT.format(
+                level=level,
+                descriptor=LEVEL_DESCRIPTOR[level],
+                library_words=library_words,
+            ),
+            max_tokens=512,
+        )
+        return StartOut(
+            topic=data.get("topic", "conversation"),
+            question=data["question"],
+            english_hint=data.get("english_hint", ""),
+        )
 
 
 @router.post("/reply", response_model=ReplyOut)
-def reply(
-    data: ReplyIn,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def reply(data: ReplyIn, user_id: UserId, db: Db):
     level = get_jlpt_level(db, user_id)
 
     if not data.user_text.strip():
@@ -126,21 +118,32 @@ def reply(
         history_lines.append(f"{label}: {turn.content}")
     history_text = "\n".join(history_lines) or "(no prior turns)"
 
-    parsed = complete_json(
-        REPLY_PROMPT.format(
-            level=level,
-            descriptor=LEVEL_DESCRIPTOR[level],
-            history=history_text,
-            user_text=data.user_text.replace('"', '\\"'),
-        ),
-        max_tokens=1536,
-    )
+    with ai_response("converse_reply", user_id=user_id):
+        parsed = complete_json(
+            REPLY_PROMPT.format(
+                level=level,
+                descriptor=LEVEL_DESCRIPTOR[level],
+                history=history_text,
+                user_text=data.user_text.replace('"', '\\"'),
+            ),
+            max_tokens=1536,
+        )
 
-    corrections = [Correction(**c) for c in parsed.get("corrections", [])]
-    return ReplyOut(
-        corrections=corrections,
-        rewrite=parsed.get("rewrite", ""),
-        feedback=parsed.get("feedback", ""),
-        follow_up=parsed.get("follow_up", ""),
-        follow_up_hint=parsed.get("follow_up_hint", ""),
-    )
+        # Drop malformed correction entries rather than failing the whole reply —
+        # the rewrite and follow-up are still useful without them.
+        corrections = [
+            Correction(
+                original=str(c.get("original", "")),
+                fixed=str(c.get("fixed", "")),
+                note=str(c.get("note", "")),
+            )
+            for c in parsed.get("corrections", [])
+            if isinstance(c, dict) and c.get("original")
+        ]
+        return ReplyOut(
+            corrections=corrections,
+            rewrite=parsed.get("rewrite", ""),
+            feedback=parsed.get("feedback", ""),
+            follow_up=parsed.get("follow_up", ""),
+            follow_up_hint=parsed.get("follow_up_hint", ""),
+        )

@@ -1,43 +1,46 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session
 
-from ..database import get_db
-from ..deps import get_user_id
+from ..crud import get_item_for_user
+from ..deps import Db, UserId
 from ..models import Item, StudySession
 from ..schemas import DashboardStats, ItemOut, SRSReview
 from ..srs import process_review
-from .items import _item_to_out
 
 router = APIRouter(prefix="/api/study", tags=["study"])
 
+# Modes where the learner's answer is graded right/wrong, so items_correct is
+# meaningful. Conversation practice records turns for streak/activity purposes
+# but has no notion of a correct answer — including it would pin accuracy at
+# 100% regardless of how the learner actually did.
+GRADED_MODES = {
+    "flashcard_jp",
+    "flashcard_en",
+    "fill_blank",
+    "sentence_build",
+    "grammar_drill",
+}
+
 
 @router.get("/due", response_model=list[ItemOut])
-def get_due_items(
-    limit: int = 20,
-    type: str | None = None,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = None):
     """Get items due for review, ordered by most overdue first."""
     now = datetime.now(timezone.utc)
     q = db.query(Item).filter(Item.user_id == user_id, Item.srs_due <= now)
     if type:
         q = q.filter(Item.type == type)
     items = q.order_by(Item.srs_due.asc()).limit(limit).all()
-    return [_item_to_out(i) for i in items]
+    return [ItemOut.model_validate(i) for i in items]
 
 
 @router.post("/review")
-def review_item(
-    data: SRSReview,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def review_item(data: SRSReview, user_id: UserId, db: Db):
     """Submit a review rating for an item."""
-    item = db.query(Item).filter(Item.id == data.item_id, Item.user_id == user_id).first()
+    # item_id arrives in the JSON body, so the require_item dependency (which
+    # binds from path/query) doesn't apply here.
+    item = get_item_for_user(db, data.item_id, user_id)
     if not item:
         raise HTTPException(404, "Item not found")
     item = process_review(item, data.rating)
@@ -50,10 +53,7 @@ def review_item(
 
 
 @router.get("/dashboard", response_model=DashboardStats)
-def get_dashboard(
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def get_dashboard(user_id: UserId, db: Db):
     """Get dashboard stats."""
     now = datetime.now(timezone.utc)
     # "Today" and the streak follow the server's local calendar day, not UTC.
@@ -73,8 +73,10 @@ def get_dashboard(
         StudySession.started_at >= today_start,
     ).all()
     studied_today = sum(s.items_reviewed for s in sessions_today)
-    correct_today = sum(s.items_correct for s in sessions_today)
-    accuracy_today = (correct_today / studied_today * 100) if studied_today > 0 else 0
+    graded = [s for s in sessions_today if s.mode in GRADED_MODES]
+    graded_reviewed = sum(s.items_reviewed for s in graded)
+    graded_correct = sum(s.items_correct for s in graded)
+    accuracy_today = (graded_correct / graded_reviewed * 100) if graded_reviewed > 0 else 0
 
     weak_items = (
         db.query(Item)
@@ -110,18 +112,14 @@ def get_dashboard(
         due_today=due_today,
         studied_today=studied_today,
         accuracy_today=round(accuracy_today, 1),
-        weak_items=[_item_to_out(i) for i in weak_items],
-        recent_items=[_item_to_out(i) for i in recent_items],
+        weak_items=[ItemOut.model_validate(i) for i in weak_items],
+        recent_items=[ItemOut.model_validate(i) for i in recent_items],
         streak_days=streak,
     )
 
 
 @router.post("/session/start")
-def start_session(
-    mode: str,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def start_session(mode: str, user_id: UserId, db: Db):
     session = StudySession(user_id=user_id, mode=mode)
     db.add(session)
     db.commit()
@@ -134,8 +132,8 @@ def end_session(
     session_id: int,
     items_reviewed: int,
     items_correct: int,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
+    user_id: UserId,
+    db: Db,
 ):
     session = db.query(StudySession).filter(
         StudySession.id == session_id, StudySession.user_id == user_id

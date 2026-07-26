@@ -43,16 +43,19 @@ jp_study_partner/
 │       ├── models.py             # ORM models: Item, Tag, Source, Setting, StudySession
 │       ├── schemas.py            # Pydantic request/response schemas
 │       ├── srs.py                # Spaced repetition algorithm
-│       ├── llm.py                # Shared LLM helpers: client construction, error-handling wrapper around messages.create, JSON parsing
+│       ├── levels.py             # JLPT level config + per-level prompt tuning, get_jlpt_level
+│       ├── crud.py               # Shared data access: get_item_for_user, get_or_create_tags
+│       ├── enrich.py             # Generates usage notes + example sentences for bare items
+│       ├── llm.py                # Shared LLM helpers: client construction, error-handling wrapper around messages.create, JSON parsing, ai_response guard
 │       ├── translation.py        # Pluggable JP→EN translation: Claude or local Ollama (TRANSLATION_PROVIDER)
-│       ├── deps.py               # FastAPI dependencies (get_user_id from X-User-ID header)
+│       ├── deps.py               # FastAPI dependencies: get_user_id, require_item, Db/UserId/OwnedItem aliases
 │       └── routers/
 │           ├── items.py          # CRUD for study items
 │           ├── study.py          # Due items, reviews, sessions, dashboard
 │           ├── ingest.py         # Text/URL/PDF ingestion via Claude API
 │           ├── generate.py       # AI question/example-sentence generation & reading passages
 │           ├── furigana.py       # Furigana annotation via fugashi tokenizer
-│           ├── settings.py       # JLPT level setting + per-level prompt tuning
+│           ├── settings.py       # JLPT level read/write endpoints (config lives in levels.py)
 │           ├── transcribe.py     # Local Whisper (faster-whisper) audio → text
 │           └── converse.py       # AI conversation tutor: open-ended Q&A + corrections
 │

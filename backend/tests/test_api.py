@@ -161,6 +161,77 @@ def test_end_unknown_session_404(client):
     assert r.status_code == 404
 
 
+def _record_session(client, mode, reviewed, correct):
+    sid = client.post(f"/api/study/session/start?mode={mode}").json()["session_id"]
+    client.post(
+        f"/api/study/session/{sid}/end?items_reviewed={reviewed}&items_correct={correct}"
+    )
+
+
+def test_accuracy_reflects_graded_sessions(client):
+    _record_session(client, "flashcard_jp", reviewed=4, correct=2)
+    assert client.get("/api/study/dashboard").json()["accuracy_today"] == 50.0
+
+
+def test_converse_excluded_from_accuracy(client):
+    """Conversation turns aren't graded, so they must not skew accuracy."""
+    _record_session(client, "flashcard_jp", reviewed=4, correct=2)   # 50%
+    _record_session(client, "converse", reviewed=6, correct=6)       # not graded
+
+    body = client.get("/api/study/dashboard").json()
+    assert body["accuracy_today"] == 50.0   # unchanged by the converse session
+    assert body["studied_today"] == 10      # but total activity still counts it
+
+
+def test_accuracy_zero_when_only_ungraded_activity(client):
+    _record_session(client, "converse", reviewed=5, correct=5)
+    body = client.get("/api/study/dashboard").json()
+    assert body["accuracy_today"] == 0
+    assert body["studied_today"] == 5
+
+
+def test_converse_session_still_counts_for_streak(client):
+    _record_session(client, "converse", reviewed=3, correct=1)
+    assert client.get("/api/study/dashboard").json()["streak_days"] == 1
+
+
+# ---- require_item dependency ------------------------------------------------
+# The shared dependency binds item_id from the path on /items/{item_id} and from
+# the query string on /generate/*. That resolution is implicit, so pin it here —
+# these 404s happen in the dependency, before any AI call, so no API key needed.
+
+def test_generate_question_404s_for_unknown_item(client):
+    r = client.post("/api/generate/question?item_id=99999&mode=fill_blank")
+    assert r.status_code == 404
+
+
+def test_generate_question_404s_across_users(client):
+    item = client.post("/api/items/", json=_make_item(),
+                       headers={"X-User-ID": "alice"}).json()
+    r = client.post(
+        f"/api/generate/question?item_id={item['id']}&mode=fill_blank",
+        headers={"X-User-ID": "bob"},
+    )
+    assert r.status_code == 404
+
+
+def test_generate_example_sentence_404s_for_unknown_item(client):
+    assert client.post("/api/generate/example-sentence?item_id=99999").status_code == 404
+
+
+def test_generate_question_requires_item_id(client):
+    """A missing item_id is a 422 from validation, not a 500 from the dependency."""
+    assert client.post("/api/generate/question?mode=fill_blank").status_code == 422
+
+
+def test_item_id_is_documented_as_a_query_param(client):
+    spec = client.get("/openapi.json").json()
+    params = spec["paths"]["/api/generate/question"]["post"]["parameters"]
+    item_id = next(p for p in params if p["name"] == "item_id")
+    assert item_id["in"] == "query"
+    assert item_id["required"] is True
+
+
 def test_review_invalid_rating_rejected(client):
     item = client.post("/api/items/", json=_make_item()).json()
     r = client.post("/api/study/review", json={"item_id": item["id"], "rating": "excellent"})

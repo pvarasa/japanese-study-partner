@@ -1,53 +1,24 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Float, cast, func, or_
-from sqlalchemy.orm import Session
+import logging
 
-from ..database import get_db
-from ..deps import get_user_id
+from fastapi import APIRouter, Query
+from sqlalchemy import Float, cast, func, or_
+
+from ..crud import get_or_create_tags
+from ..deps import Db, OwnedItem, UserId
+from ..enrich import build_enrichment
+from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
 from ..models import Item, Tag
 from ..schemas import ItemCreate, ItemOut, ItemUpdate
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
-
-def _item_to_out(item: Item) -> ItemOut:
-    return ItemOut(
-        id=item.id,
-        type=item.type,
-        japanese=item.japanese,
-        reading=item.reading,
-        meaning=item.meaning,
-        notes=item.notes,
-        example_sentences=item.example_sentences,
-        jlpt_level=item.jlpt_level,
-        source_id=item.source_id,
-        created_at=item.created_at,
-        srs_interval=item.srs_interval,
-        srs_ease=item.srs_ease,
-        srs_due=item.srs_due,
-        srs_reviews=item.srs_reviews,
-        srs_correct=item.srs_correct,
-        tags=[t.name for t in item.tags],
-    )
-
-
-def _get_or_create_tags(db: Session, tag_names: list[str]) -> list[Tag]:
-    tags = []
-    for name in tag_names:
-        name = name.strip().lower()
-        if not name:
-            continue
-        tag = db.query(Tag).filter(Tag.name == name).first()
-        if not tag:
-            tag = Tag(name=name)
-            db.add(tag)
-            db.flush()
-        tags.append(tag)
-    return tags
+log = logging.getLogger("app.items")
 
 
 @router.get("/", response_model=list[ItemOut])
 def list_items(
+    user_id: UserId,
+    db: Db,
     type: str | None = None,
     search: str | None = None,
     tag: str | None = None,
@@ -55,8 +26,6 @@ def list_items(
     accuracy: str | None = None,
     limit: int = Query(default=100, le=500),
     offset: int = 0,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
 ):
     q = db.query(Item).filter(Item.user_id == user_id)
     if type:
@@ -88,75 +57,76 @@ def list_items(
             q = q.filter(Item.srs_reviews > 0, acc >= 0.85)
     q = q.order_by(Item.created_at.desc())
     items = q.offset(offset).limit(limit).all()
-    return [_item_to_out(i) for i in items]
+    return [ItemOut.model_validate(i) for i in items]
 
 
 @router.post("/", response_model=ItemOut)
-def create_item(
-    data: ItemCreate,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
+def create_item(data: ItemCreate, user_id: UserId, db: Db, enrich: bool = False):
+    """Create a study item.
+
+    Plain ``def`` so the optional Claude enrichment runs in a threadpool rather
+    than on the event loop. With ``enrich=true`` the missing usage note and
+    example sentences are generated at save time, so items added from the
+    Reading page match the ones the import flow produces.
+    """
+    notes = data.notes
+    example_sentences = data.example_sentences
+
+    if enrich and not (notes and example_sentences):
+        level = data.jlpt_level if data.jlpt_level in LEVEL_DESCRIPTOR else get_jlpt_level(db, user_id)
+        try:
+            generated = build_enrichment(
+                item_type=data.type,
+                japanese=data.japanese,
+                reading=data.reading,
+                meaning=data.meaning,
+                level=level,
+            )
+            notes = notes or generated["notes"] or None
+            example_sentences = example_sentences or generated["example_sentences"] or None
+        except Exception:
+            # Never lose the user's word because the model hiccuped — save the
+            # bare item and let the backfill script pick it up later.
+            log.warning("Enrichment failed for %r; saving without notes", data.japanese, exc_info=True)
+
     item = Item(
         user_id=user_id,
         type=data.type,
         japanese=data.japanese,
         reading=data.reading,
         meaning=data.meaning,
-        notes=data.notes,
-        example_sentences=data.example_sentences,
+        notes=notes,
+        example_sentences=example_sentences,
         jlpt_level=data.jlpt_level,
         source_id=data.source_id,
     )
     if data.tags:
-        item.tags = _get_or_create_tags(db, data.tags)
+        item.tags = get_or_create_tags(db, data.tags)
     db.add(item)
     db.commit()
     db.refresh(item)
-    return _item_to_out(item)
+    return ItemOut.model_validate(item)
 
 
 @router.get("/{item_id}", response_model=ItemOut)
-def get_item(
-    item_id: int,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
-    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
-    if not item:
-        raise HTTPException(404, "Item not found")
-    return _item_to_out(item)
+def get_item(item: OwnedItem):
+    return ItemOut.model_validate(item)
 
 
 @router.put("/{item_id}", response_model=ItemOut)
-def update_item(
-    item_id: int,
-    data: ItemUpdate,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
-    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
-    if not item:
-        raise HTTPException(404, "Item not found")
+def update_item(item: OwnedItem, data: ItemUpdate, db: Db):
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == "tags":
-            item.tags = _get_or_create_tags(db, value)
+            item.tags = get_or_create_tags(db, value)
         else:
             setattr(item, field, value)
     db.commit()
     db.refresh(item)
-    return _item_to_out(item)
+    return ItemOut.model_validate(item)
 
 
 @router.delete("/{item_id}")
-def delete_item(
-    item_id: int,
-    user_id: str = Depends(get_user_id),
-    db: Session = Depends(get_db),
-):
-    item = db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
-    if not item:
-        raise HTTPException(404, "Item not found")
+def delete_item(item: OwnedItem, db: Db):
     db.delete(item)
     db.commit()
     return {"ok": True}

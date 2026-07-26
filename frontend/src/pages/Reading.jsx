@@ -40,6 +40,8 @@ export default function Reading() {
   const saveWord = async (word) => {
     setSaving(word.japanese)
     try {
+      // enrich: the server fills in usage notes + example sentences, so words
+      // saved here match imported ones. Adds ~1-2s, covered by the row spinner.
       await api.createItem({
         type: 'word',
         japanese: word.japanese,
@@ -47,7 +49,7 @@ export default function Reading() {
         meaning: word.meaning,
         jlpt_level: jlptLevel,
         tags: ['from-reading'],
-      })
+      }, { enrich: true })
       setSavedWords(prev => prev.includes(word.japanese) ? prev : [...prev, word.japanese])
     } catch {
       // ignore duplicates

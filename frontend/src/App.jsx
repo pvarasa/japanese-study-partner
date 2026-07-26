@@ -1,6 +1,7 @@
-import { Routes, Route, NavLink } from 'react-router-dom'
+import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
 import { BookOpen, Brain, BarChart3, Upload, Menu, X, FileText, Minus, Plus, MessagesSquare } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import ErrorBoundary from './components/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
 import Items from './pages/Items'
 import Study from './pages/Study'
@@ -28,6 +29,7 @@ const JP_SIZES = [
 ]
 
 function App() {
+  const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
   const [sizeIdx, setSizeIdx] = useState(() => {
     const saved = localStorage.getItem('jp-size')
@@ -187,14 +189,16 @@ function App() {
 
       {/* Content */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/items" element={<Items />} />
-          <Route path="/study" element={<Study />} />
-          <Route path="/import" element={<Ingest />} />
-          <Route path="/reading" element={<Reading />} />
-          <Route path="/converse" element={<Converse />} />
-        </Routes>
+        <ErrorBoundary resetKey={location.pathname}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/items" element={<Items />} />
+            <Route path="/study" element={<Study />} />
+            <Route path="/import" element={<Ingest />} />
+            <Route path="/reading" element={<Reading />} />
+            <Route path="/converse" element={<Converse />} />
+          </Routes>
+        </ErrorBoundary>
       </main>
     </div>
     </LevelContext.Provider>

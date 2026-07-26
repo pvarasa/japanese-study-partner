@@ -31,13 +31,19 @@ export default function Converse() {
   // startConversation can see current values without re-subscribing effects.
   const sessionIdRef = useRef(null)
   const turnsRef = useRef(0)
+  // Turns the tutor returned with no corrections. This used to report every
+  // turn as correct, which pinned the dashboard's accuracy toward 100%. The
+  // dashboard now excludes conversation from accuracy entirely, but the stored
+  // count should still reflect what actually happened.
+  const cleanTurnsRef = useRef(0)
 
   const endSession = async () => {
     const id = sessionIdRef.current
-    const turns = turnsRef.current
     if (id == null) return
     sessionIdRef.current = null
-    try { await api.endSession(id, turns, turns) } catch { /* ignore */ }
+    try {
+      await api.endSession(id, turnsRef.current, cleanTurnsRef.current)
+    } catch { /* ignore — stats just won't be recorded for this session */ }
   }
 
   useEffect(() => {
@@ -55,6 +61,7 @@ export default function Converse() {
       const sess = await api.startSession('converse')
       sessionIdRef.current = sess.session_id
       turnsRef.current = 0
+      cleanTurnsRef.current = 0
 
       const s = await api.converseStart()
       setTopic(s.topic)
@@ -82,6 +89,7 @@ export default function Converse() {
         { role: 'learner', content: userText },
       ])
       turnsRef.current += 1
+      if (res.corrections?.length === 0) cleanTurnsRef.current += 1
     } catch (err) {
       setError(err.message || 'Failed to submit')
     }

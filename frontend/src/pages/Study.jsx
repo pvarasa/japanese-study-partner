@@ -21,6 +21,20 @@ const QUESTION_ERROR = 'Failed to load this question. Please try again.'
 // Fallback when submitting a review rating fails.
 const RATE_ERROR = 'Failed to save your review. Please try again.'
 
+// `example_sentences` is a JSON string in a text column, authored by the LLM at
+// ingest time and never validated as parseable. A malformed value used to throw
+// during render and blank the page, so degrade to "no examples" instead.
+function parseExamples(raw) {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(e => e && typeof e.japanese === 'string')
+  } catch {
+    return []
+  }
+}
+
 export default function Study() {
   const [mode, setMode] = useState(null)
   const [items, setItems] = useState([])
@@ -230,7 +244,7 @@ export default function Study() {
 
   const item = items[current]
   const progress = `${current + 1} / ${items.length}`
-  const examples = item.example_sentences ? JSON.parse(item.example_sentences) : []
+  const examples = parseExamples(item.example_sentences)
 
   const ratingButtons = (
     <div className="space-y-2">
