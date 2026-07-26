@@ -8,8 +8,8 @@ on:
     branches: [main]
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +24,11 @@ jobs:
         working-directory: backend
 
       - name: Ruff check
-        run: uv run ruff check app
+        run: uv run ruff check app tests
+        working-directory: backend
+
+      - name: Pytest
+        run: uv run pytest -q
         working-directory: backend
 
       - name: Set up Node
@@ -35,16 +39,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        run: npm install
+        run: npm ci
         working-directory: frontend
 
       - name: ESLint
         run: npm run lint
         working-directory: frontend
 
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+
   release:
     name: Build & Release
-    needs: lint
+    needs: check
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
