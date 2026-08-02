@@ -29,6 +29,11 @@ _API_ERROR_MSG = "The AI service returned an error. Please try again later."
 # call_claude already maps upstream API failures to messages of their own.
 BAD_RESPONSE_MSG = "Couldn't generate this — the AI returned an unexpected response. Please try again."
 
+# Truncation gets its own message. It reads as "bad JSON" to the parser, but the
+# cause and the fix are completely different — the reply was fine, it just ran
+# past max_tokens — and retrying unchanged reproduces it every time.
+TRUNCATED_MSG = "The AI's reply was cut off before it finished. Please try again with a shorter piece of text."
+
 
 @contextmanager
 def ai_response(operation: str, **context: Any) -> Iterator[None]:
@@ -88,6 +93,10 @@ def complete_json(content: str, *, max_tokens: int, model: str = DEFAULT_MODEL) 
     through ``call_claude`` (which maps upstream API errors to HTTPExceptions),
     and decode the JSON body. Raises ``json.JSONDecodeError`` if the reply isn't
     valid JSON — callers that build a response from the result should guard it.
+
+    A reply that hit ``max_tokens`` is reported as its own 502 rather than being
+    left to fail as malformed JSON: the parse error it produces points at the
+    JSON, but the actual fix is a bigger budget or a smaller request.
     """
     message = call_claude(
         get_anthropic_client(),
@@ -95,7 +104,17 @@ def complete_json(content: str, *, max_tokens: int, model: str = DEFAULT_MODEL) 
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": content}],
     )
-    return parse_json_response(message.content[0].text)
+    if message.stop_reason == "max_tokens":
+        log.error(
+            "Reply truncated at max_tokens=%d (model=%s, output_tokens=%s)",
+            max_tokens, model, getattr(message.usage, "output_tokens", "?"),
+        )
+        raise HTTPException(status_code=502, detail=TRUNCATED_MSG)
+    text = next((b.text for b in message.content if b.type == "text"), None)
+    if text is None:
+        log.error("No text block in reply (stop_reason=%s)", message.stop_reason)
+        raise HTTPException(status_code=502, detail=BAD_RESPONSE_MSG)
+    return parse_json_response(text)
 
 
 def call_claude(client: Anthropic, *, retry_on_overload: bool = True, **kwargs) -> Any:

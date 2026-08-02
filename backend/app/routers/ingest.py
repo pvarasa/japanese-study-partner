@@ -17,6 +17,16 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
 log = logging.getLogger("app.ingest")
 
+MAX_INPUT_CHARS = 8000
+
+# Extraction is the one AI call whose output grows with its input — every other
+# one returns a single fixed-shape object. Left uncapped it runs past max_tokens
+# on a page of ordinary Japanese (~1800 chars was enough), and the truncated JSON
+# then fails to parse. Cap the item count so the reply stays bounded no matter how
+# long the source is, and budget enough tokens for a full batch at that cap.
+MAX_ITEMS = 25
+EXTRACT_MAX_TOKENS = 8192
+
 EXTRACT_PROMPT = """You are a Japanese language teaching assistant. The user is at JLPT {level} level ({descriptor}).
 
 Analyze the following Japanese content and extract study materials. For each item, provide:
@@ -36,6 +46,8 @@ Focus on items that would be most useful for a JLPT {level} learner:
 4. Idiomatic phrases
 
 Skip items that are clearly far below the learner's level unless they are genuinely useful (e.g. common idioms). Prefer items that stretch the learner a little.
+
+Return at most {max_items} items. If the text contains more than that, pick the {max_items} most valuable ones rather than covering everything.
 
 Return a JSON object with:
 - "title": a short title for this source material
@@ -95,8 +107,12 @@ async def _fetch_url(url: str) -> str:
 
 
 def _extract_with_llm(text: str, level: str) -> dict:
-    prompt = EXTRACT_PROMPT.format(level=level, descriptor=LEVEL_DESCRIPTOR[level])
-    return complete_json(f"{prompt}\n\n---\n\n{text[:8000]}", max_tokens=4096)
+    prompt = EXTRACT_PROMPT.format(
+        level=level, descriptor=LEVEL_DESCRIPTOR[level], max_items=MAX_ITEMS
+    )
+    return complete_json(
+        f"{prompt}\n\n---\n\n{text[:MAX_INPUT_CHARS]}", max_tokens=EXTRACT_MAX_TOKENS
+    )
 
 
 def _pdf_text(content: bytes) -> str:
