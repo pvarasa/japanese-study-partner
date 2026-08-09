@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Brain, BookOpen, Target, Flame } from 'lucide-react'
+import { Brain, BookOpen, Target, Flame, AlertTriangle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
+import { pct } from '../format'
 import Ruby from '../components/Ruby'
+import RetentionChart from '../components/RetentionChart'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
 
 function DashboardSkeleton() {
@@ -35,11 +37,28 @@ function DashboardSkeleton() {
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null)
+  const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
+  const [restoring, setRestoring] = useState(null)
 
   useEffect(() => {
     api.getDashboard().then(setStats).catch(console.error).finally(() => setLoading(false))
+    // The trend is supplementary — a failure here shouldn't blank the page.
+    api.getHistory(60).then(setHistory).catch(console.error)
   }, [])
+
+  // Unsuspending resets the card's history, so refresh the whole dashboard
+  // rather than trying to patch the counts locally.
+  const restore = async (id) => {
+    setRestoring(id)
+    try {
+      await api.unsuspendItem(id)
+      setStats(await api.getDashboard())
+    } catch (err) {
+      console.error(err)
+    }
+    setRestoring(null)
+  }
 
   if (loading) return <DashboardSkeleton />
   if (!stats) return <div className="text-center py-12 text-gray-500">Could not load dashboard</div>
@@ -77,6 +96,57 @@ export default function Dashboard() {
           <Brain className="inline mr-2" size={20} />
           Study {stats.due_today} due items
         </Link>
+      )}
+
+      {/* Retention trend */}
+      <div>
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-lg font-semibold">Recall accuracy</h2>
+          <span className="text-xs text-gray-500">last 60 days · reviews below</span>
+        </div>
+        <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
+          <RetentionChart data={history} />
+        </div>
+      </div>
+
+      {/* Leeches — cards that keep failing and have been pulled from rotation */}
+      {stats.leeches?.length > 0 && (
+        <div>
+          <div className="flex items-baseline justify-between mb-3">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <AlertTriangle size={18} className="text-amber-400" />
+              Needs rework
+            </h2>
+            <span className="text-xs text-gray-500">{stats.suspended_count} suspended</span>
+          </div>
+          <p className="text-sm text-gray-500 mb-2">
+            These kept coming back wrong, so they're out of the review queue. Rewrite the
+            card — a sentence beats a bare gloss — then restore it.
+          </p>
+          <div className="bg-gray-900 rounded-xl border border-gray-800 divide-y divide-gray-800">
+            {stats.leeches.map((item) => (
+              <div key={item.id} className="px-4 py-3 flex justify-between items-center gap-3">
+                <div className="min-w-0">
+                  <Ruby text={item.japanese} className="font-medium text-lg" />
+                  <div className="text-sm text-gray-400 truncate">{item.meaning}</div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-xs px-1.5 py-0.5 bg-red-500/15 rounded text-red-400 tabular-nums">
+                    {pct(item.pass_rate ?? 0)} · {item.srs_reviews}×
+                  </span>
+                  <button
+                    onClick={() => restore(item.id)}
+                    disabled={restoring === item.id}
+                    title="Return to the review queue and reset its history"
+                    className="flex items-center gap-1 text-xs text-indigo-400 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-1 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    <RotateCcw size={12} /> Restore
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Weak items */}

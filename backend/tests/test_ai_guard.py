@@ -101,6 +101,7 @@ def test_item_out_flattens_orm_tags():
     item = Item(
         id=1, user_id="u", type="word", japanese="猫", meaning="cat",
         srs_interval=0.0, srs_ease=2.5, srs_reviews=0, srs_correct=0,
+        srs_hard=0, srs_lapses=0, suspended=False,
     )
     item.created_at = item.srs_due = __import__("datetime").datetime.now()
     item.tags = [Tag(name="animal"), Tag(name="noun")]
@@ -108,3 +109,7 @@ def test_item_out_flattens_orm_tags():
     out = ItemOut.model_validate(item)
     assert out.tags == ["animal", "noun"]
     assert out.japanese == "猫"
+    # Derived on the model, not stored — None until the item has been reviewed.
+    assert out.pass_rate is None
+    assert out.recall_rate is None
+    assert out.is_leech is False

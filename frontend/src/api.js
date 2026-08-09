@@ -10,8 +10,12 @@ async function request(path, { body, headers, ...rest } = {}) {
 
   const res = await fetch(`${API}${path}`, init);
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'Request failed');
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    const err = new Error(body.detail || 'Request failed');
+    // Callers branch on this — cloze treats a 422 as "skip this item" rather
+    // than an error worth interrupting the session for.
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -36,15 +40,31 @@ export const api = {
     request(`/items/${enrich ? '?enrich=true' : ''}`, { method: 'POST', body: data }),
   updateItem: (id, data) => request(`/items/${id}`, { method: 'PUT', body: data }),
   deleteItem: (id) => request(`/items/${id}`, { method: 'DELETE' }),
+  // Pull an item out of the review queue without losing it.
+  suspendItem: (id) => request(`/items/${id}/suspend`, { method: 'POST' }),
+  // reset=true (the default) clears the review history, so a reworked card
+  // doesn't re-trip the leech threshold on its first lapse.
+  unsuspendItem: (id, { reset = true } = {}) =>
+    request(`/items/${id}/unsuspend?reset=${reset}`, { method: 'POST' }),
 
   // Study
   getDueItems: (params = {}) => request(`/study/due?${qs(params)}`),
-  reviewItem: (itemId, rating) =>
-    request('/study/review', { method: 'POST', body: { item_id: itemId, rating } }),
+  // Passing sessionId folds the review into the session's counters server-side,
+  // so progress survives abandoning the session part-way.
+  reviewItem: (itemId, rating, sessionId = null) =>
+    request('/study/review', {
+      method: 'POST',
+      body: { item_id: itemId, rating, ...(sessionId != null && { session_id: sessionId }) },
+    }),
   getDashboard: () => request('/study/dashboard'),
+  getHistory: (days = 60) => request(`/study/history?days=${days}`),
   startSession: (mode) => request(`/study/session/start?mode=${mode}`, { method: 'POST' }),
-  endSession: (id, reviewed, correct) =>
-    request(`/study/session/${id}/end?items_reviewed=${reviewed}&items_correct=${correct}`, { method: 'POST' }),
+  // For modes that aren't item reviews (conversation turns).
+  sessionProgress: (id, { reviewed = 0, correct = 0, hard = 0 }) =>
+    request(`/study/session/${id}/progress`, { method: 'POST', body: { reviewed, correct, hard } }),
+  // Counts are optional — omit them to just close the session without
+  // overwriting the progress already recorded per review.
+  endSession: (id) => request(`/study/session/${id}/end`, { method: 'POST' }),
 
   // Ingest
   ingestText: (content) => request('/ingest/text', { method: 'POST', body: form({ content }) }),

@@ -3,23 +3,40 @@ import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2, Eye, Eye
 import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
+import SpeakButton from '../components/SpeakButton'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
 
 const MODES = [
   { id: 'flashcard_jp', label: 'JP → EN', desc: 'See Japanese, recall English' },
   { id: 'flashcard_en', label: 'EN → JP', desc: 'See English, recall Japanese' },
+  { id: 'cloze', label: 'Cloze', desc: 'Recall the word in its own sentence' },
   { id: 'fill_blank', label: 'Fill Blank', desc: 'Complete the sentence' },
   { id: 'sentence_build', label: 'Build Sentence', desc: 'Translate to Japanese' },
   { id: 'grammar_drill', label: 'Grammar Drill', desc: 'Choose the correct usage' },
 ]
 
-// Modes whose questions are generated on demand by the AI (vs. plain flashcards).
-const GENERATED_MODES = ['fill_blank', 'sentence_build', 'grammar_drill']
+// Modes that fetch a question per item rather than showing a plain flashcard.
+// Cloze goes through the same endpoint but is built from the item's stored
+// example sentences, so it costs no AI call and returns instantly.
+const GENERATED_MODES = ['cloze', 'fill_blank', 'sentence_build', 'grammar_drill']
 
 // Fallback when the generate request fails without a server-provided detail.
 const QUESTION_ERROR = 'Failed to load this question. Please try again.'
 // Fallback when submitting a review rating fails.
 const RATE_ERROR = 'Failed to save your review. Please try again.'
+
+// The placeholder the server blanks the target word out with. Must match
+// BLANK in backend/app/cloze.py — it's what turns a cloze prompt back into a
+// full sentence for the read-aloud button.
+const CLOZE_BLANK = '＿＿＿'
+
+/** Compare a typed answer against the accepted spellings. */
+function isAnswerAccepted(userAnswer, question) {
+  const given = (userAnswer || '').trim()
+  if (!given) return false
+  const accepted = question.accepted?.length ? question.accepted : [question.answer]
+  return accepted.some(a => a.trim() === given)
+}
 
 // `example_sentences` is a JSON string in a text column, authored by the LLM at
 // ingest time and never validated as parseable. A malformed value used to throw
@@ -55,6 +72,25 @@ export default function Study() {
   const [evaluation, setEvaluation] = useState(null)
   const [error, setError] = useState(null)
 
+  /**
+   * Fetch the question for the first item at or after `from` that has one.
+   *
+   * Cloze can legitimately produce nothing for an item (no stored example
+   * actually uses the word), which the server reports as a 422. Skip those
+   * instead of stalling the session on an error the learner can't act on.
+   */
+  const loadQuestionFrom = async (list, from, m) => {
+    for (let i = from; i < list.length; i++) {
+      try {
+        return { index: i, question: await api.generateQuestion(list[i].id, m) }
+      } catch (err) {
+        if (err.status === 422) continue
+        throw err
+      }
+    }
+    return null
+  }
+
   const startStudy = async (m) => {
     setMode(m)
     setLoading(true)
@@ -84,8 +120,15 @@ export default function Study() {
       setSessionId(sess.session_id)
 
       if (GENERATED_MODES.includes(m)) {
-        const q = await api.generateQuestion(due[0].id, m)
-        setQuestion(q)
+        const found = await loadQuestionFrom(due, 0, m)
+        if (!found) {
+          // Nothing in this batch can produce a question for this mode.
+          setDone(true)
+          setLoading(false)
+          return
+        }
+        setCurrent(found.index)
+        setQuestion(found.question)
       }
     } catch (err) {
       setError(err.message || QUESTION_ERROR)
@@ -106,30 +149,41 @@ export default function Study() {
     setLoading(false)
   }
 
+  /** Close the session without counts — progress is already recorded per review. */
+  const finishSession = async () => {
+    if (!sessionId) return
+    setSessionId(null)
+    try {
+      await api.endSession(sessionId)
+    } catch { /* ignore — the reviews themselves are already recorded */ }
+  }
+
+  const exitStudy = () => {
+    finishSession()
+    setMode(null)
+    setDone(false)
+  }
+
   const handleRate = async (rating) => {
     const item = items[current]
     setError(null)
     try {
-      await api.reviewItem(item.id, rating)
+      // Passing the session id records this review against the session
+      // server-side, so quitting part-way keeps what was already done.
+      await api.reviewItem(item.id, rating, sessionId)
     } catch (err) {
       // Keep the card in place so the user can retry the same rating.
       setError(err.message || RATE_ERROR)
       return
     }
-    const stats = {
+    setSessionStats({
       reviewed: sessionStats.reviewed + 1,
-      correct: sessionStats.correct + (rating !== 'again' ? 1 : 0),
-    }
-    setSessionStats(stats)
+      // Strict: only a clean recall counts. "Hard" means it was dredged up.
+      correct: sessionStats.correct + (rating === 'good' ? 1 : 0),
+    })
 
-    if (current + 1 >= items.length) {
-      // Session-end bookkeeping failing shouldn't block the completion screen.
-      try {
-        if (sessionId) await api.endSession(sessionId, stats.reviewed, stats.correct)
-      } catch { /* ignore — stats just won't be recorded for this session */ }
-      setDone(true)
-    } else {
-      setCurrent(current + 1)
+    // Clear everything the previous card left behind.
+    const resetCard = () => {
       setRevealed(false)
       setQuestion(null)
       setUserAnswer('')
@@ -141,18 +195,38 @@ export default function Study() {
       setEvaluating(false)
       setEvaluation(null)
       setError(null)
-
-      if (GENERATED_MODES.includes(mode)) {
-        setLoading(true)
-        try {
-          const q = await api.generateQuestion(items[current + 1].id, mode)
-          setQuestion(q)
-        } catch (err) {
-          setError(err.message || QUESTION_ERROR)
-        }
-        setLoading(false)
-      }
     }
+
+    if (current + 1 >= items.length) {
+      await finishSession()
+      setDone(true)
+      return
+    }
+
+    resetCard()
+    setCurrent(current + 1)
+
+    if (!GENERATED_MODES.includes(mode)) return
+
+    // Advance optimistically above, then correct forward once the fetch lands:
+    // loadQuestionFrom skips items that can't produce a question, so its result
+    // is the real next index. Leaving `current` behind during the await would
+    // point the error card's retry at the item just answered.
+    setLoading(true)
+    try {
+      const found = await loadQuestionFrom(items, current + 1, mode)
+      if (found) {
+        setCurrent(found.index)
+        setQuestion(found.question)
+      } else {
+        // Every remaining item was skipped — nothing left to ask.
+        await finishSession()
+        setDone(true)
+      }
+    } catch (err) {
+      setError(err.message || QUESTION_ERROR)
+    }
+    setLoading(false)
   }
 
   const checkAnswer = async () => {
@@ -229,7 +303,7 @@ export default function Study() {
           </div>
         )}
         <div className="flex gap-3 justify-center">
-          <button onClick={() => { setMode(null); setDone(false) }}
+          <button onClick={exitStudy}
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-500">
             Back to modes
           </button>
@@ -275,7 +349,7 @@ export default function Study() {
   // instead of asking the learner to self-grade.
   const derivedRating = mode === 'sentence_build'
     ? (evaluation?.verdict === 'correct' ? 'good' : evaluation?.verdict === 'partial' ? 'hard' : 'again')
-    : (question && userAnswer === question.answer ? 'good' : 'again')
+    : (question && isAnswerAccepted(userAnswer, question) ? 'good' : 'again')
 
   const RATING_LABEL = { good: 'Good', hard: 'Hard', again: 'Again' }
   const RATING_COLOR = { good: 'text-green-400', hard: 'text-orange-400', again: 'text-red-400' }
@@ -308,7 +382,7 @@ export default function Study() {
       <div className="max-w-lg mx-auto space-y-4">
         <div className="flex justify-between items-center text-sm text-gray-500">
           <span>{progress}</span>
-          <button onClick={() => setMode(null)} className="text-gray-500 hover:text-gray-300">Exit</button>
+          <button onClick={exitStudy} className="text-gray-500 hover:text-gray-300">Exit</button>
         </div>
 
         {/* Card */}
@@ -317,7 +391,10 @@ export default function Study() {
           onClick={() => setRevealed(true)}
         >
           {isJpToEn ? (
-            <Ruby text={item.japanese} className="text-3xl font-medium mb-2" />
+            <div className="flex items-center justify-center gap-1 mb-2">
+              <Ruby text={item.japanese} className="text-3xl font-medium" />
+              <SpeakButton text={item.japanese} size={17} />
+            </div>
           ) : (
             <div className="text-xl font-medium mb-2">{item.meaning}</div>
           )}
@@ -331,12 +408,20 @@ export default function Study() {
               {isJpToEn ? (
                 <div className="text-lg font-medium">{item.meaning}</div>
               ) : (
-                <Ruby text={item.japanese} className="text-2xl font-medium" />
+                // EN → JP: the speaker only appears after the reveal, since
+                // hearing the word before answering would give it away.
+                <div className="flex items-center justify-center gap-1">
+                  <Ruby text={item.japanese} className="text-2xl font-medium" />
+                  <SpeakButton text={item.japanese} size={16} />
+                </div>
               )}
               {item.notes && <div className="text-sm text-gray-500 mt-2">{item.notes}</div>}
               {examples.length > 0 && (
                 <div className="mt-3 text-sm text-left bg-gray-800 rounded-lg p-3">
-                  <Ruby text={examples[0].japanese} className="text-gray-200" />
+                  <div className="flex items-start justify-between gap-1">
+                    <Ruby text={examples[0].japanese} className="text-gray-200" />
+                    <SpeakButton text={examples[0].japanese} className="shrink-0 -mt-1" size={14} />
+                  </div>
                   <div className="text-gray-500 mt-1">{examples[0].english}</div>
                 </div>
               )}
@@ -362,7 +447,10 @@ export default function Study() {
               </button>
               {generatedExample && (
                 <div className="mt-2 text-sm text-left bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-3">
-                  <Ruby text={generatedExample.japanese} className="text-gray-200" />
+                  <div className="flex items-start justify-between gap-1">
+                    <Ruby text={generatedExample.japanese} className="text-gray-200" />
+                    <SpeakButton text={generatedExample.japanese} className="shrink-0 -mt-1" size={14} />
+                  </div>
                   <div className="text-gray-500 mt-1">{generatedExample.english}</div>
                 </div>
               )}
@@ -390,7 +478,9 @@ export default function Study() {
               ? 'Translate to Japanese'
               : mode === 'grammar_drill'
                 ? 'Choose the correct usage'
-                : 'Fill in the blank'}
+                : mode === 'cloze'
+                  ? 'Recall the missing word'
+                  : 'Fill in the blank'}
           </div>
 
           {mode === 'sentence_build' ? (
@@ -432,6 +522,9 @@ export default function Study() {
             <>
               <Ruby text={question.prompt} className="text-xl" />
               {question.context && <div className="text-sm text-gray-500">{question.context}</div>}
+              {mode === 'cloze' && (
+                <div className="text-xs text-gray-600">Kanji or kana both count.</div>
+              )}
             </>
           )}
 
@@ -521,7 +614,12 @@ export default function Study() {
           )}
 
           {answerChecked && mode !== 'sentence_build' && (() => {
-            const isCorrect = userAnswer === question.answer
+            const isCorrect = isAnswerAccepted(userAnswer, question)
+            // For cloze the sentence with the blank filled back in is the thing
+            // worth reading aloud, not the bare word.
+            const spoken = mode === 'cloze'
+              ? question.prompt.replace(CLOZE_BLANK, question.answer)
+              : question.answer
             return (
               <div className={`border-t pt-4 space-y-2 ${isCorrect ? 'border-green-500/30' : 'border-red-500/30'}`}>
                 {isCorrect ? (
@@ -541,7 +639,13 @@ export default function Study() {
                   </>
                 )}
                 <div className="text-sm text-gray-500">Correct answer:</div>
-                <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
+                <div className="flex items-center gap-1">
+                  <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
+                  <SpeakButton text={spoken} label="Read the sentence aloud" />
+                </div>
+                {mode === 'cloze' && question.translation && (
+                  <div className="text-sm text-gray-500">{question.translation}</div>
+                )}
               </div>
             )
           })()}
@@ -555,7 +659,7 @@ export default function Study() {
               className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
               Try again
             </button>
-            <button onClick={() => setMode(null)}
+            <button onClick={exitStudy}
               className="border border-gray-700 text-gray-300 px-4 py-2 rounded-lg hover:bg-gray-800 text-sm">
               Exit
             </button>

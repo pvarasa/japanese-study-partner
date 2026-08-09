@@ -43,6 +43,14 @@ class ItemOut(BaseModel):
     srs_due: datetime
     srs_reviews: int
     srs_correct: int
+    srs_hard: int
+    srs_lapses: int
+    suspended: bool
+    # Derived on the model so clients don't re-implement the arithmetic.
+    # Both are None until the item has been reviewed at least once.
+    pass_rate: Optional[float]
+    recall_rate: Optional[float]
+    is_leech: bool
     tags: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -63,6 +71,16 @@ class ItemOut(BaseModel):
 class SRSReview(BaseModel):
     item_id: int
     rating: Literal["again", "hard", "good"]
+    # When present the server folds this review into the session's counters, so
+    # progress survives abandoning the session part-way. See routers/study.py.
+    session_id: Optional[int] = None
+
+
+class SessionProgress(BaseModel):
+    """Incremental counter deltas for study modes that aren't item reviews."""
+    reviewed: int = 0
+    correct: int = 0
+    hard: int = 0
 
 
 class IngestItem(BaseModel):
@@ -103,7 +121,7 @@ class VocabHint(BaseModel):
 
 
 class StudyQuestion(BaseModel):
-    type: str  # flashcard, fill_blank, sentence_build, grammar_drill
+    type: str  # flashcard, cloze, fill_blank, sentence_build, grammar_drill
     item_id: int
     prompt: str
     answer: str
@@ -111,6 +129,9 @@ class StudyQuestion(BaseModel):
     context: Optional[str] = None
     translation: Optional[str] = None
     vocabulary: list[VocabHint] = []  # key-word hints for sentence_build
+    # Alternate spellings graded as correct (cloze accepts the kana reading as
+    # well as the kanji, so the mode works without a Japanese IME).
+    accepted: list[str] = []
 
 
 class ReadingWord(BaseModel):
@@ -132,6 +153,14 @@ class ExampleSentence(BaseModel):
     english: str
 
 
+class DayStat(BaseModel):
+    date: str  # local calendar day, YYYY-MM-DD
+    reviewed: int
+    correct: int
+    hard: int
+    accuracy: float  # strict: "good" as a share of reviews
+
+
 class DashboardStats(BaseModel):
     total_items: int
     due_today: int
@@ -140,3 +169,5 @@ class DashboardStats(BaseModel):
     weak_items: list[ItemOut]
     recent_items: list[ItemOut]
     streak_days: int
+    leeches: list[ItemOut] = []
+    suspended_count: int = 0

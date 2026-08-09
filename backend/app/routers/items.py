@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query
 from sqlalchemy import Float, cast, func, or_
@@ -24,6 +25,7 @@ def list_items(
     tag: str | None = None,
     jlpt_level: str | None = None,
     accuracy: str | None = None,
+    suspended: bool | None = None,
     limit: int = Query(default=100, le=500),
     offset: int = 0,
 ):
@@ -41,12 +43,17 @@ def list_items(
         q = q.join(Item.tags).filter(Tag.name == tag.lower())
     if jlpt_level:
         q = q.filter(Item.jlpt_level == jlpt_level)
+    if suspended is not None:
+        q = q.filter(Item.suspended.is_(suspended))
     if accuracy:
         # nullif() makes the divisor NULL (not 0) for never-reviewed items, so
         # the division yields NULL instead of raising division_by_zero on
         # PostgreSQL, which doesn't guarantee the srs_reviews > 0 clause is
         # evaluated first.
-        acc = cast(Item.srs_correct, Float) / func.nullif(Item.srs_reviews, 0)
+        #
+        # Uses the lenient pass rate ("hard" counts, only "again" is a miss) so
+        # the buckets line up with the leech threshold in srs.py.
+        acc = cast(Item.srs_correct + Item.srs_hard, Float) / func.nullif(Item.srs_reviews, 0)
         if accuracy == "new":
             q = q.filter(Item.srs_reviews == 0)
         elif accuracy == "struggling":
@@ -110,6 +117,38 @@ def create_item(data: ItemCreate, user_id: UserId, db: Db, enrich: bool = False)
 
 @router.get("/{item_id}", response_model=ItemOut)
 def get_item(item: OwnedItem):
+    return ItemOut.model_validate(item)
+
+
+@router.post("/{item_id}/suspend", response_model=ItemOut)
+def suspend_item(item: OwnedItem, db: Db):
+    """Pull an item out of the review queue without deleting it."""
+    item.suspended = True
+    db.commit()
+    db.refresh(item)
+    return ItemOut.model_validate(item)
+
+
+@router.post("/{item_id}/unsuspend", response_model=ItemOut)
+def unsuspend_item(item: OwnedItem, db: Db, reset: bool = True):
+    """Return a suspended item to the queue.
+
+    ``reset`` clears the review history by default: an item is normally
+    unsuspended right after its card was reworked, and carrying the old failure
+    count over would re-trip the leech threshold on the next lapse — instantly
+    re-suspending a card that is now a different question.
+    """
+    item.suspended = False
+    if reset:
+        item.srs_reviews = 0
+        item.srs_correct = 0
+        item.srs_hard = 0
+        item.srs_lapses = 0
+        item.srs_ease = 2.5
+        item.srs_interval = 0
+        item.srs_due = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(item)
     return ItemOut.model_validate(item)
 
 

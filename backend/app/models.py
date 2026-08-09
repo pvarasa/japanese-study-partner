@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
 
+from . import srs
 from .database import Base
 
 # Many-to-many: items can have multiple tags
@@ -35,10 +36,35 @@ class Item(Base):
     srs_ease = Column(Float, default=2.5)
     srs_due = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     srs_reviews = Column(Integer, default=0)
+    # "good" ratings only. Rows created before the hard/correct split also have
+    # their "hard" ratings folded in here — there's no way to unmix them after
+    # the fact, so treat pre-split accuracy as the lenient (non-lapse) figure.
     srs_correct = Column(Integer, default=0)
+    srs_hard = Column(Integer, default=0, nullable=False)
+    srs_lapses = Column(Integer, default=0, nullable=False)  # "again" ratings
+    # Leeches are pulled out of the review queue until reworked, so a card the
+    # learner can't crack stops consuming every session. See app/srs.py.
+    suspended = Column(Boolean, default=False, nullable=False)
 
     source = relationship("Source", back_populates="items")
     tags = relationship("Tag", secondary=item_tags, back_populates="items")
+
+    # Derived SRS figures, exposed through ItemOut so every client reads the
+    # same definitions instead of re-deriving them from the raw counters.
+    @property
+    def pass_rate(self) -> float | None:
+        """Share of reviews that weren't lapses ("hard" counts). None if unreviewed."""
+        return srs.pass_rate(self)
+
+    @property
+    def recall_rate(self) -> float | None:
+        """Share of reviews rated "good". None if unreviewed."""
+        return srs.recall_rate(self)
+
+    @property
+    def is_leech(self) -> bool:
+        """Failed often enough to be worth reworking."""
+        return srs.is_leech(self)
 
 
 class Tag(Base):
@@ -83,5 +109,6 @@ class StudySession(Base):
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at = Column(DateTime)
     items_reviewed = Column(Integer, default=0)
-    items_correct = Column(Integer, default=0)
-    mode = Column(String(30))  # flashcard_jp, flashcard_en, fill_blank, sentence_build, converse
+    items_correct = Column(Integer, default=0)  # "good" ratings only
+    items_hard = Column(Integer, default=0)
+    mode = Column(String(30))  # flashcard_jp, flashcard_en, cloze, fill_blank, sentence_build, converse

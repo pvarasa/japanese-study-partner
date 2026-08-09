@@ -36,13 +36,19 @@ jp_study_partner/
 │   ├── alembic/
 │   │   ├── env.py                # Alembic env: uses app.database.engine directly
 │   │   └── versions/             # Migration scripts
-│   ├── tests/                    # pytest suite: srs, llm parser, non-AI API smoke
+│   ├── tests/                    # pytest suite: srs, cloze, llm parser, non-AI API smoke
+│   ├── scripts/
+│   │   ├── backfill_enrich.py    # One-off: fill missing notes/examples (one Claude call per item)
+│   │   └── suspend_leeches.py    # One-off: suspend items already past the leech threshold
 │   └── app/
 │       ├── main.py               # FastAPI app, CORS, static file serving, /api/features
 │       ├── database.py           # SQLAlchemy engine: PostgreSQL if DATABASE_URL set, else SQLite
+│       ├── sqlite_migrate.py     # Idempotent ADD COLUMN pass for SQLite (create_all can't alter)
 │       ├── models.py             # ORM models: Item, Tag, Source, Setting, StudySession
 │       ├── schemas.py            # Pydantic request/response schemas
-│       ├── srs.py                # Spaced repetition algorithm
+│       ├── srs.py                # Spaced repetition algorithm + leech detection
+│       ├── cloze.py              # Builds fill-in-the-blank questions from stored example sentences
+│       ├── japanese.py           # fugashi tokenizer helpers: annotate, tokenize, reading_for
 │       ├── levels.py             # JLPT level config + per-level prompt tuning, get_jlpt_level
 │       ├── crud.py               # Shared data access: get_item_for_user, get_or_create_tags
 │       ├── enrich.py             # Generates usage notes + example sentences for bare items
@@ -50,11 +56,11 @@ jp_study_partner/
 │       ├── translation.py        # Pluggable JP→EN translation: Claude or local Ollama (TRANSLATION_PROVIDER)
 │       ├── deps.py               # FastAPI dependencies: get_user_id, require_item, Db/UserId/OwnedItem aliases
 │       └── routers/
-│           ├── items.py          # CRUD for study items
-│           ├── study.py          # Due items, reviews, sessions, dashboard
+│           ├── items.py          # CRUD for study items + suspend/unsuspend
+│           ├── study.py          # Due items, reviews, sessions, dashboard, history
 │           ├── ingest.py         # Text/URL/PDF ingestion via Claude API
-│           ├── generate.py       # AI question/example-sentence generation & reading passages
-│           ├── furigana.py       # Furigana annotation via fugashi tokenizer
+│           ├── generate.py       # Question generation (cloze locally, the rest via Claude) & reading passages
+│           ├── furigana.py       # Furigana HTTP endpoints (tokenizer lives in app/japanese.py)
 │           ├── settings.py       # JLPT level read/write endpoints (config lives in levels.py)
 │           ├── transcribe.py     # Local Whisper (faster-whisper) audio → text
 │           └── converse.py       # AI conversation tutor: open-ended Q&A + corrections
@@ -74,11 +80,13 @@ jp_study_partner/
         │   ├── Ruby.jsx          # Furigana component (batched, cached kanji annotations)
         │   ├── ReadingText.jsx   # Tokenized passage with per-word click-to-lookup popovers
         │   ├── LevelBadge.jsx    # JLPT level pill shown on study/reading/converse headers
+        │   ├── RetentionChart.jsx # Inline SVG: daily recall accuracy + review volume
+        │   ├── SpeakButton.jsx   # Japanese TTS via Web Speech API; hidden when no ja voice
         │   └── Skeleton.jsx      # Shimmer skeleton primitives (Skeleton, SkeletonLine)
         └── pages/
-            ├── Dashboard.jsx     # Stats, due items, weak areas, streak
-            ├── Items.jsx         # Library: search, type/level/accuracy filters, inline edit, delete
-            ├── Study.jsx         # Flashcards & AI-generated drills with SRS; example-sentence button
+            ├── Dashboard.jsx     # Stats, retention trend, leech rework queue, weak areas, streak
+            ├── Items.jsx         # Library: search, type/level/accuracy/status filters, suspend, inline edit, delete
+            ├── Study.jsx         # Flashcards, cloze & AI drills with SRS; example-sentence button
             ├── Reading.jsx       # AI reading practice with library + new vocabulary
             ├── Converse.jsx      # Conversation mode: tutor prompts, typed/spoken replies, corrections
             └── Ingest.jsx        # Import content via text/URL/PDF + AI extraction
@@ -106,7 +114,25 @@ The core study unit. Can be a **word**, **grammar** point, or **expression**.
 | srs_ease | float | Difficulty factor (1.3-3.0, default 2.5) |
 | srs_due | datetime | When the item is next due |
 | srs_reviews | int | Total review count |
-| srs_correct | int | Correct answer count |
+| srs_correct | int | "Good" rating count (see note below) |
+| srs_hard | int | "Hard" rating count |
+| srs_lapses | int | "Again" rating count |
+| suspended | bool | Pulled out of the review queue (leech, or manual) |
+
+Two accuracy measures fall out of these, both computed in `app/srs.py` and exposed on
+`ItemOut` as `recall_rate` / `pass_rate` (and `is_leech`) so no client re-derives them:
+
+- **recall rate** = `srs_correct / srs_reviews` — clean recalls only (strict)
+- **pass rate** = `(srs_correct + srs_hard) / srs_reviews` — anything that wasn't a lapse (lenient)
+
+Both are `null` until the item has been reviewed at least once. Leech detection and the
+Library's accuracy filters use the pass rate; the dashboard's accuracy and trend use the
+recall rate.
+
+> **Note on historical rows.** `srs_hard` and `srs_lapses` were added later. Reviews
+> recorded before then counted "hard" as correct, so those rows have `srs_hard = 0`
+> and a `srs_correct` that folds the hards in. There's no way to unmix them after the
+> fact, so pre-migration accuracy reads as the *pass* rate, not the recall rate.
 
 ### Tag
 Many-to-many with Item via `item_tags` join table. Tags are global (shared label names across users).
@@ -118,7 +144,11 @@ Where study material came from. Fields: `user_id`, `title`, `type` (url/pdf/text
 Per-user key/value settings. Composite PK `(user_id, key)`. Currently stores `jlpt_level` (N1–N5, default N3).
 
 ### StudySession
-Tracks study sessions. Fields: `user_id`, `started_at`, `ended_at`, `items_reviewed`, `items_correct`, `mode` (one of `flashcard_jp`, `flashcard_en`, `fill_blank`, `sentence_build`, `converse`).
+Tracks study sessions. Fields: `user_id`, `started_at`, `ended_at`, `items_reviewed`, `items_correct` ("good" only), `items_hard`, `mode` (one of `flashcard_jp`, `flashcard_en`, `cloze`, `fill_blank`, `sentence_build`, `grammar_drill`, `converse`).
+
+Counters are written **incrementally**, as each review happens — not at session end. A
+session that's abandoned part-way keeps the reviews already done. See
+[Session recording](#session-recording).
 
 ## Multi-User Support
 
@@ -137,20 +167,24 @@ Base URL: `http://localhost:8000/api`
 ### Items (`/api/items`)
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/items/` | List items. Query: `type`, `search`, `tag`, `jlpt_level` (N1–N5), `accuracy` (`new`/`struggling`/`learning`/`strong`), `limit`, `offset` |
+| GET | `/items/` | List items. Query: `type`, `search`, `tag`, `jlpt_level` (N1–N5), `accuracy` (`new`/`struggling`/`learning`/`strong`), `suspended` (bool), `limit`, `offset` |
 | POST | `/items/` | Create item |
 | GET | `/items/{id}` | Get single item |
 | PUT | `/items/{id}` | Update item (partial) |
 | DELETE | `/items/{id}` | Delete item |
+| POST | `/items/{id}/suspend` | Pull the item out of the review queue |
+| POST | `/items/{id}/unsuspend` | Return it to the queue. Query: `reset` (default `true`) also clears its SRS history, so a reworked card doesn't re-trip the leech threshold on its first lapse |
 
 ### Study (`/api/study`)
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/study/due` | Get items due for review. Query: `limit`, `type` |
-| POST | `/study/review` | Submit review. Body: `{item_id, rating}` where rating is `again`/`hard`/`good` |
-| GET | `/study/dashboard` | Stats: total, due, studied today, accuracy, weak items, streak |
+| GET | `/study/due` | Get items due for review (excludes suspended). Query: `limit`, `type` |
+| POST | `/study/review` | Submit review. Body: `{item_id, rating, session_id?}` where rating is `again`/`hard`/`good`. With `session_id`, folds the review into that session's counters in the same transaction |
+| GET | `/study/dashboard` | Stats: total, due, studied today, accuracy, weak items, streak, leeches, suspended count |
+| GET | `/study/history` | Per-day graded review counts for the trend chart. Query: `days` (default 60, max 365) |
 | POST | `/study/session/start` | Start session. Query: `mode` |
-| POST | `/study/session/{id}/end` | End session. Query: `items_reviewed`, `items_correct` |
+| POST | `/study/session/{id}/progress` | Add to a session's counters. Body: `{reviewed, correct, hard}`. For modes that aren't item reviews (conversation turns) |
+| POST | `/study/session/{id}/end` | Close a session (stamps `ended_at`). Takes no counts — counters only ever move through `/review` and `/progress` |
 
 ### Ingest (`/api/ingest`)
 | Method | Path | Description |
@@ -163,7 +197,7 @@ Base URL: `http://localhost:8000/api`
 ### Generate (`/api/generate`)
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/generate/question` | AI-generated drill question. Query: `item_id`, `mode` (`fill_blank`/`sentence_build`/`grammar_drill`) |
+| POST | `/generate/question` | Drill question. Query: `item_id`, `mode` (`cloze`/`fill_blank`/`sentence_build`/`grammar_drill`). **`cloze` costs no AI call** — it's built from the item's stored example sentences and returns instantly; 422 if no stored example contains the word |
 | POST | `/generate/example-sentence` | Generate a fresh example sentence for an item. Query: `item_id`. Returns `{japanese, english}`. Each call produces a different sentence. |
 | POST | `/generate/reading` | Generate reading passage using library words + new vocabulary. Form: `prompt` (optional topic guidance) |
 | POST | `/generate/evaluate` | AI evaluation of a sentence_build answer. Body: `{user_answer, expected_answer, prompt}`. Returns `{verdict: "correct"\|"partial"\|"incorrect", feedback, corrected}`. Accepts natural variations; provides specific feedback and a corrected version when the answer has errors. |
@@ -206,25 +240,73 @@ Base URL: `http://localhost:8000/api`
 
 Simple spaced repetition with three ratings:
 
-| Rating | Effect |
-|--------|--------|
-| **Again** | Reset interval to ~10 min, ease -0.2 |
-| **Hard** | Short interval (1hr if new, else x1.2), ease -0.1 |
-| **Good** | Standard interval (1 day if new, else x ease), ease +0.05 |
+| Rating | Effect | Counter |
+|--------|--------|---------|
+| **Again** | Reset interval to ~10 min, ease -0.2 | `srs_lapses` |
+| **Hard** | Short interval (1hr if new, else x1.2), ease -0.1 | `srs_hard` |
+| **Good** | Standard interval (1 day if new, else x ease), ease +0.05 | `srs_correct` |
 
-Ease factor is clamped to [1.3, 3.0]. Items are due when `srs_due <= now`, ordered by most overdue first.
+Ease factor is clamped to [1.3, 3.0]. Items are due when `srs_due <= now` and not
+suspended, ordered by most overdue first.
+
+Each rating increments its own counter. "Hard" is deliberately **not** counted as
+correct — folding it into `srs_correct` made a card the learner barely dredged up look
+identical to one they knew cold, which flattered the accuracy number and hid exactly the
+items worth attention.
+
+### Leeches
+
+A card that keeps failing comes back every session, never matures, and crowds out items
+that would actually stick. Past a threshold it's **suspended** — removed from `/study/due`
+until the card itself is reworked.
+
+- **Threshold:** `srs_reviews >= 8` and pass rate `< 60%` (`LEECH_MIN_REVIEWS` /
+  `LEECH_MAX_PASS_RATE` in `backend/app/srs.py`)
+- **Trigger:** only on a lapse. Crossing the threshold on a *correct* answer would yank a
+  card the learner just got right, which reads as a bug.
+- **Recovery:** restore from the dashboard's "Needs rework" list or the Library. That
+  resets the SRS history by default, so a rewritten card isn't instantly re-suspended by
+  its old failure count.
+
+Leeches that predate the feature stay in rotation until they next lapse. To sweep them all
+at once:
+
+```bash
+cd backend && uv run python -m scripts.suspend_leeches --dry-run   # preview
+cd backend && uv run python -m scripts.suspend_leeches             # apply
+```
+
+### Session recording
+
+Session counters are advanced **per review** (`POST /study/review` with a `session_id`),
+not at session end. Recording only on completion meant an abandoned session logged nothing
+at all — which silently zeroed every mode the learner didn't run to the last card, and
+broke the streak. `/study/session/{id}/end` now only stamps `ended_at`: letting the
+closing call also *set* totals would give an exit path — which may fire from an unmount
+handler, or not at all — the power to overwrite what actually happened.
+
+Conversation has no item reviews, so it posts each turn to
+`/study/session/{id}/progress` as it happens rather than reporting a total from an unmount
+handler that may never run.
 
 ## Study Modes
 
 1. **JP to EN Flashcard** - See Japanese, recall English meaning
 2. **EN to JP Flashcard** - See English, recall Japanese
-3. **Fill in the Blank** - AI generates a sentence with the target word blanked out, 4 multiple-choice options
-4. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input). On submit, calls `/generate/evaluate` for AI assessment: **correct** (accepts natural variations), **almost there** (right idea, grammar/particle error — shows a corrected version), or **incorrect** (wrong meaning).
+3. **Cloze** - The word blanked out of one of *its own* stored example sentences, with the English gloss as the hint. Free-form input; **either the kanji or the kana reading counts**, so it's playable without switching to a Japanese IME. Costs no AI call and returns instantly — it reuses `example_sentences`, which every enriched item already has. Rotates among matching sentences so repeat reviews aren't identical. Items whose examples don't actually contain the word are skipped rather than erroring.
+4. **Fill in the Blank** - AI generates a sentence with the target word blanked out, 4 multiple-choice options
+5. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input). On submit, calls `/generate/evaluate` for AI assessment: **correct** (accepts natural variations), **almost there** (right idea, grammar/particle error — shows a corrected version), or **incorrect** (wrong meaning).
+6. **Grammar Drill** - AI generates a usage question for a grammar point, 4 multiple-choice options
 
-Modes 1–4 use SRS rating after each card. Flashcard modes (1–2) include a **Generate example** button on reveal that calls `/generate/example-sentence` to produce a fresh AI-generated sentence with translation; press it multiple times for variety.
+Modes 1–6 use SRS rating after each card. Flashcard modes (1–2) include a **Generate example** button on reveal that calls `/generate/example-sentence` to produce a fresh AI-generated sentence with translation; press it multiple times for variety.
 
-5. **Reading Practice** - AI generates a short passage using words from your library + new vocabulary. Accepts optional topic prompt. Shows furigana, toggleable translation, and word list. Click any word for an inline gloss, or **drag-select a phrase or sentence fragment** to get a natural English translation in a popup. New words can be added to library with one click.
-6. **Conversation** - Open-ended Japanese Q&A. The tutor asks a level-appropriate question; you reply by typing or by recording audio (local Whisper transcription). Returns inline corrections, a natural rewrite of your answer, short feedback, and a follow-up question. Each submitted turn is logged to the study session.
+Japanese text on cards, example sentences, and cloze answers carries a **speaker button**
+(Web Speech API, `ja-JP`, rate 0.85). It's local to the browser — no API key, no network,
+no audio files — and is hidden entirely on a machine with no Japanese voice installed,
+rather than letting an English voice mangle the kana.
+
+7. **Reading Practice** - AI generates a short passage using words from your library + new vocabulary. Accepts optional topic prompt. Shows furigana, toggleable translation, and word list. Click any word for an inline gloss, or **drag-select a phrase or sentence fragment** to get a natural English translation in a popup. New words can be added to library with one click.
+8. **Conversation** - Open-ended Japanese Q&A. The tutor asks a level-appropriate question; you reply by typing or by recording audio (local Whisper transcription). Returns inline corrections, a natural rewrite of your answer, short feedback, and a follow-up question. Each turn is recorded to the study session as it happens.
 
 ## JLPT Level Setting
 
@@ -330,7 +412,7 @@ If you also use other Ollama models on the same host, set `OLLAMA_MAX_LOADED_MOD
 Input (text/URL/PDF) -> backend extracts text -> sends to Claude with extraction prompt -> returns extracted vocab/grammar/expressions -> user reviews & selects -> `POST /api/ingest/save` -> creates Source + Items
 
 ### Study Session
-Select mode -> `POST /study/session/start` -> `GET /study/due` (up to 20 items) -> show card/question -> user rates -> `POST /study/review` (updates SRS) -> next card -> `POST /study/session/{id}/end`
+Select mode -> `POST /study/session/start` -> `GET /study/due` (up to 20 unsuspended items) -> show card/question -> user rates -> `POST /study/review` with `session_id` (updates SRS *and* the session counters in one transaction; may auto-suspend a leech) -> next card -> `POST /study/session/{id}/end` (just stamps `ended_at`; quitting early loses nothing)
 
 ### Conversation Turn
 `POST /converse/start` returns a question -> user types or records audio -> (audio path: `POST /transcribe/` -> text appended to textarea) -> `POST /converse/reply` with history + user text -> corrections, rewrite, follow-up rendered -> user clicks Continue to loop.
@@ -341,6 +423,11 @@ Select mode -> `POST /study/session/start` -> `GET /study/due` (up to 20 items) 
 - **No auth**: personal tool, secured at network level (Tailscale)
 - **Claude Sonnet for ingestion/generation**: balances cost and quality across JLPT levels
 - **Simple SRS over SM-2**: three buttons instead of five, easier to use, good enough for personal use
+- **"Hard" is not "correct"**: counting it as a success made the accuracy number flatter than reality and hid the cards most worth reworking
+- **Leeches are suspended, not deleted**: the word is still worth knowing — the *card* is what's broken. Suspension keeps it out of the queue until it's rewritten, and restoring resets its history so the old failures don't immediately re-trip the threshold
+- **Cloze is built from stored examples, not generated**: every enriched item already carries example sentences, so blanking the word out of one costs nothing, returns instantly, and works offline. fugashi lemma matching handles conjugation (済む → 済みました) and phrases that inflect internally (手に入れる → 手に入れた)
+- **Browser TTS over server-side audio**: every target platform ships a `ja-JP` voice, so there's no key, no latency, and nothing to cache. Quality varies by OS, which is an acceptable trade for a personal tool
+- **Session progress recorded per review**: writing counters only at session end meant an abandoned session logged nothing, which silently erased whole modes from the stats and broke the streak
 - **Dark mode only**: personal preference, easier on the eyes for study sessions
 - **Local Whisper over cloud STT**: avoids per-minute API costs, keeps audio on-device, runs fast on the 3080. Kotoba-Whisper over vanilla large-v3 because it's Japanese-fine-tuned with better CER at lower latency
 - **JLPT level stored server-side**: the app is used from multiple devices over Tailscale, so the DB is the source of truth; `localStorage` is only a cache for first-paint

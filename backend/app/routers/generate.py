@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Form, HTTPException
 from pydantic import BaseModel
 
+from ..cloze import build_cloze
 from ..deps import Db, OwnedItem, UserId
 from ..levels import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
 from ..llm import ai_response, complete_json
@@ -41,6 +42,12 @@ Return ONLY valid JSON."""
 
 @router.post("/question", response_model=StudyQuestion)
 def generate_question(item: OwnedItem, mode: str, user_id: UserId, db: Db):
+    # Cloze is built from the item's stored example sentences, so it costs no
+    # AI call and returns instantly. Handled before the Claude path rather than
+    # as its own endpoint so the frontend keeps a single question-fetch flow.
+    if mode == "cloze":
+        return _cloze_question(item)
+
     level = get_jlpt_level(db, user_id)
     with ai_response("generate_question", item_id=item.id, mode=mode):
         data = complete_json(
@@ -78,6 +85,32 @@ def generate_question(item: OwnedItem, mode: str, user_id: UserId, db: Db):
             translation=data.get("translation"),
             vocabulary=vocabulary,
         )
+
+
+def _cloze_question(item: Item) -> StudyQuestion:
+    """Blank the item out of one of its own example sentences.
+
+    422 rather than 500 when the word can't be located in any stored example:
+    it's an expected gap (bare items added before enrichment, or a sentence
+    that paraphrases instead of using the word), and the frontend skips the
+    item rather than stalling the session.
+    """
+    data = build_cloze(item)
+    if not data:
+        raise HTTPException(
+            422,
+            f"No example sentence for {item.japanese} contains the word — "
+            "generate one from the card first.",
+        )
+    return StudyQuestion(
+        type="cloze",
+        item_id=item.id,
+        prompt=data["prompt"],
+        answer=data["answer"],
+        accepted=data["accepted"],
+        translation=data["translation"],
+        context=item.meaning,
+    )
 
 
 EXAMPLE_SENTENCE_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.

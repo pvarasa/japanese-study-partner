@@ -1,17 +1,25 @@
 import { useState, useEffect } from 'react'
-import { Search, Trash2, Edit3, ChevronDown } from 'lucide-react'
+import { Search, Trash2, Edit3, ChevronDown, PauseCircle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
+import { pct } from '../format'
 import Ruby from '../components/Ruby'
 import { SkeletonLine } from '../components/Skeleton'
 
 const TYPES = ['all', 'word', 'grammar', 'expression']
 const LEVELS = ['all', 'N1', 'N2', 'N3', 'N4', 'N5']
+// Buckets use the lenient pass rate ("hard" counts, only "again" is a miss),
+// matching the leech threshold on the server.
 const ACCURACY = [
   { value: 'all', label: 'All accuracy' },
   { value: 'new', label: 'New (unreviewed)' },
   { value: 'struggling', label: 'Struggling (<60%)' },
   { value: 'learning', label: 'Learning (60–85%)' },
   { value: 'strong', label: 'Strong (>85%)' },
+]
+const STATUS = [
+  { value: 'all', label: 'All items' },
+  { value: 'active', label: 'In rotation' },
+  { value: 'suspended', label: 'Suspended' },
 ]
 
 export default function Items() {
@@ -20,6 +28,7 @@ export default function Items() {
   const [typeFilter, setTypeFilter] = useState('all')
   const [levelFilter, setLevelFilter] = useState('all')
   const [accuracyFilter, setAccuracyFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({})
@@ -29,12 +38,13 @@ export default function Items() {
     if (typeFilter !== 'all') params.type = typeFilter
     if (levelFilter !== 'all') params.jlpt_level = levelFilter
     if (accuracyFilter !== 'all') params.accuracy = accuracyFilter
+    if (statusFilter !== 'all') params.suspended = statusFilter === 'suspended'
     if (search) params.search = search
     setLoading(true)
     api.getItems(params).then(setItems).catch(console.error).finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [typeFilter, levelFilter, accuracyFilter])
+  useEffect(() => { load() }, [typeFilter, levelFilter, accuracyFilter, statusFilter])
 
   const handleSearch = (e) => {
     e.preventDefault()
@@ -58,6 +68,15 @@ export default function Items() {
     load()
   }
 
+  // Unsuspending resets the card's SRS history (the card was presumably
+  // reworked), so reload rather than patching the row locally.
+  const toggleSuspend = async (item) => {
+    const updated = item.suspended
+      ? await api.unsuspendItem(item.id)
+      : await api.suspendItem(item.id)
+    setItems(items.map(i => (i.id === item.id ? { ...i, ...updated } : i)))
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Library</h1>
@@ -79,6 +98,7 @@ export default function Items() {
             { value: typeFilter, onChange: setTypeFilter, options: TYPES.map(t => ({ value: t, label: t === 'all' ? 'All types' : t.charAt(0).toUpperCase() + t.slice(1) })) },
             { value: levelFilter, onChange: setLevelFilter, options: LEVELS.map(l => ({ value: l, label: l === 'all' ? 'All levels' : l })) },
             { value: accuracyFilter, onChange: setAccuracyFilter, options: ACCURACY.map(a => ({ value: a.value, label: a.label })) },
+            { value: statusFilter, onChange: setStatusFilter, options: STATUS.map(s => ({ value: s.value, label: s.label })) },
           ].map((sel, i) => (
             <div key={i} className="relative">
               <select
@@ -134,23 +154,43 @@ export default function Items() {
                     <Ruby text={item.japanese} className="font-medium text-lg" />
                     <div className="text-sm text-gray-400">{item.meaning}</div>
                     {item.notes && <div className="text-xs text-gray-500 mt-0.5">{item.notes}</div>}
-                    <div className="flex gap-1 mt-1">
+                    <div className="flex flex-wrap gap-1 mt-1">
                       <span className="text-xs px-1.5 py-0.5 bg-gray-800 rounded text-gray-500">{item.type}</span>
                       {item.jlpt_level && <span className="text-xs px-1.5 py-0.5 bg-indigo-500/15 rounded text-indigo-400">{item.jlpt_level}</span>}
+                      {item.suspended && (
+                        <span className="text-xs px-1.5 py-0.5 bg-amber-500/15 rounded text-amber-400">suspended</span>
+                      )}
                       {item.tags?.map(t => <span key={t} className="text-xs px-1.5 py-0.5 bg-green-500/15 rounded text-green-400">{t}</span>)}
                     </div>
                   </div>
                   <div className="flex gap-1 ml-4 shrink-0">
+                    <button
+                      onClick={() => toggleSuspend(item)}
+                      title={item.suspended
+                        ? 'Return to the review queue and reset its history'
+                        : 'Pull out of the review queue'}
+                      className={`p-1.5 rounded ${item.suspended ? 'text-amber-400 hover:text-amber-300' : 'text-gray-500 hover:text-amber-400'}`}
+                    >
+                      {item.suspended ? <RotateCcw size={14} /> : <PauseCircle size={14} />}
+                    </button>
                     <button onClick={() => startEdit(item)} className="p-1.5 text-gray-500 hover:text-indigo-400 rounded"><Edit3 size={14} /></button>
                     <button onClick={() => handleDelete(item.id)} className="p-1.5 text-gray-500 hover:text-red-400 rounded"><Trash2 size={14} /></button>
                   </div>
                 </div>
               )}
-              {/* SRS info */}
-              <div className="flex gap-3 mt-1 text-xs text-gray-600">
+              {/* SRS info. Two rates, both derived server-side: "recalled" is
+                  clean recalls only, "passed" also counts the ones dragged up
+                  as Hard. Null until the item has been reviewed. */}
+              <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-600">
                 <span>Reviews: {item.srs_reviews}</span>
-                {item.srs_reviews > 0 && <span>Accuracy: {Math.round(item.srs_correct / item.srs_reviews * 100)}%</span>}
+                {item.recall_rate != null && (
+                  <>
+                    <span>Recalled: {pct(item.recall_rate)}</span>
+                    {item.srs_hard > 0 && <span>Passed: {pct(item.pass_rate)}</span>}
+                  </>
+                )}
                 <span>Interval: {item.srs_interval < 1 ? `${Math.round(item.srs_interval * 24 * 60)}m` : `${Math.round(item.srs_interval)}d`}</span>
+                {item.is_leech && !item.suspended && <span className="text-amber-500/80">leech</span>}
               </div>
             </div>
           ))}

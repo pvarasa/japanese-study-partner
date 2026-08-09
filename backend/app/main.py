@@ -16,11 +16,15 @@ from fastapi.staticfiles import StaticFiles
 from .database import Base, engine
 from .routers import converse, furigana, generate, ingest, items, settings, study, transcribe
 from .routers.transcribe import whisper_enabled
+from .sqlite_migrate import ensure_columns
 from .translation import prewarm as prewarm_translation
 
 # SQLite only — PostgreSQL schema is managed by Alembic (run via entrypoint)
 if not os.environ.get("DATABASE_URL"):
     Base.metadata.create_all(bind=engine)
+    # create_all builds missing tables but never alters existing ones, so an
+    # older nihongo.db needs new columns added explicitly.
+    ensure_columns(engine)
 
 
 @asynccontextmanager

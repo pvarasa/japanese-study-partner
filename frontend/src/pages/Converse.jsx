@@ -27,23 +27,25 @@ export default function Converse() {
   const chunksRef = useRef([])
   const recordTimeoutRef = useRef(null)
 
-  // Session tracking. Refs mirror the state so the unmount cleanup and
-  // startConversation can see current values without re-subscribing effects.
+  // Session tracking. A ref (not state) so the unmount cleanup and
+  // startConversation see the current id without re-subscribing effects.
+  //
+  // Turn counts aren't tracked here any more — each turn posts its own
+  // increment to the server as it happens. Conversation still reports
+  // corrections-free turns as "correct", but the dashboard excludes converse
+  // from accuracy entirely, since a conversation has no right answer.
   const sessionIdRef = useRef(null)
-  const turnsRef = useRef(0)
-  // Turns the tutor returned with no corrections. This used to report every
-  // turn as correct, which pinned the dashboard's accuracy toward 100%. The
-  // dashboard now excludes conversation from accuracy entirely, but the stored
-  // count should still reflect what actually happened.
-  const cleanTurnsRef = useRef(0)
 
   const endSession = async () => {
     const id = sessionIdRef.current
     if (id == null) return
     sessionIdRef.current = null
     try {
-      await api.endSession(id, turnsRef.current, cleanTurnsRef.current)
-    } catch { /* ignore — stats just won't be recorded for this session */ }
+      // Counts are omitted deliberately: each turn already recorded itself, so
+      // passing totals here would only risk overwriting them from a cleanup
+      // path that may or may not complete.
+      await api.endSession(id)
+    } catch { /* ignore — the turns themselves are already recorded */ }
   }
 
   useEffect(() => {
@@ -60,8 +62,6 @@ export default function Converse() {
       await endSession()
       const sess = await api.startSession('converse')
       sessionIdRef.current = sess.session_id
-      turnsRef.current = 0
-      cleanTurnsRef.current = 0
 
       const s = await api.converseStart()
       setTopic(s.topic)
@@ -88,8 +88,16 @@ export default function Converse() {
         ...turnHistory,
         { role: 'learner', content: userText },
       ])
-      turnsRef.current += 1
-      if (res.corrections?.length === 0) cleanTurnsRef.current += 1
+      const clean = res.corrections?.length === 0
+      // Record the turn as it happens. This used to be reported only from the
+      // unmount cleanup, and an async fetch fired during unmount or tab-close
+      // routinely never lands — every conversation ever held recorded zero.
+      if (sessionIdRef.current != null) {
+        api.sessionProgress(sessionIdRef.current, {
+          reviewed: 1,
+          correct: clean ? 1 : 0,
+        }).catch(() => { /* the conversation matters more than the counter */ })
+      }
     } catch (err) {
       setError(err.message || 'Failed to submit')
     }

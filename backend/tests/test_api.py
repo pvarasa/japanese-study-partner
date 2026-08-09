@@ -1,4 +1,5 @@
 """Smoke tests for non-AI API endpoints against an isolated SQLite DB."""
+import pytest
 
 
 def test_health(client):
@@ -149,23 +150,24 @@ def test_session_start_and_end(client):
     assert r.status_code == 200
     session_id = r.json()["session_id"]
 
-    r = client.post(
-        f"/api/study/session/{session_id}/end?items_reviewed=3&items_correct=2"
-    )
+    r = client.post(f"/api/study/session/{session_id}/end")
     assert r.status_code == 200
     assert r.json() == {"ok": True}
 
 
 def test_end_unknown_session_404(client):
-    r = client.post("/api/study/session/99999/end?items_reviewed=0&items_correct=0")
+    r = client.post("/api/study/session/99999/end")
     assert r.status_code == 404
 
 
-def _record_session(client, mode, reviewed, correct):
+def _record_session(client, mode, reviewed, correct, hard=0):
+    """Synthesise a completed session. Counters only move through /progress."""
     sid = client.post(f"/api/study/session/start?mode={mode}").json()["session_id"]
     client.post(
-        f"/api/study/session/{sid}/end?items_reviewed={reviewed}&items_correct={correct}"
+        f"/api/study/session/{sid}/progress",
+        json={"reviewed": reviewed, "correct": correct, "hard": hard},
     )
+    client.post(f"/api/study/session/{sid}/end")
 
 
 def test_accuracy_reflects_graded_sessions(client):
@@ -193,6 +195,216 @@ def test_accuracy_zero_when_only_ungraded_activity(client):
 def test_converse_session_still_counts_for_streak(client):
     _record_session(client, "converse", reviewed=3, correct=1)
     assert client.get("/api/study/dashboard").json()["streak_days"] == 1
+
+
+# ---- Incremental session recording -------------------------------------------
+# Counters used to be written only when a session ran to completion, so
+# abandoning one part-way recorded nothing at all.
+
+def test_review_with_session_id_advances_counters(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post("/api/study/session/start?mode=flashcard_jp").json()["session_id"]
+
+    client.post("/api/study/review", json={"item_id": item["id"], "rating": "good", "session_id": sid})
+    body = client.get("/api/study/dashboard").json()
+    assert body["studied_today"] == 1
+    assert body["accuracy_today"] == 100.0
+
+
+def test_abandoned_session_keeps_its_progress(client):
+    """No /end call at all — the reviews already done must still count."""
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post("/api/study/session/start?mode=flashcard_jp").json()["session_id"]
+    for rating in ("good", "again", "hard"):
+        client.post("/api/study/review", json={"item_id": item["id"], "rating": rating, "session_id": sid})
+
+    body = client.get("/api/study/dashboard").json()
+    assert body["studied_today"] == 3
+    # Strict accuracy: only the "good" counts, "hard" is tracked separately.
+    assert body["accuracy_today"] == pytest.approx(33.3, abs=0.1)
+
+
+def test_review_without_session_id_records_no_session_progress(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    client.post("/api/study/review", json={"item_id": item["id"], "rating": "good"})
+    assert client.get("/api/study/dashboard").json()["studied_today"] == 0
+
+
+def test_review_ignores_a_session_belonging_to_another_user(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post(
+        "/api/study/session/start?mode=flashcard_jp", headers={"X-User-ID": "someone"}
+    ).json()["session_id"]
+
+    r = client.post("/api/study/review", json={"item_id": item["id"], "rating": "good", "session_id": sid})
+    assert r.status_code == 200  # the review itself still lands
+    assert client.get("/api/study/dashboard", headers={"X-User-ID": "someone"}).json()["studied_today"] == 0
+
+
+def test_session_progress_endpoint_accumulates(client):
+    sid = client.post("/api/study/session/start?mode=converse").json()["session_id"]
+    client.post(f"/api/study/session/{sid}/progress", json={"reviewed": 1, "correct": 1})
+    r = client.post(f"/api/study/session/{sid}/progress", json={"reviewed": 1})
+    assert r.json()["items_reviewed"] == 2
+    assert client.get("/api/study/dashboard").json()["studied_today"] == 2
+
+
+def test_progress_on_unknown_session_404s(client):
+    r = client.post("/api/study/session/99999/progress", json={"reviewed": 1})
+    assert r.status_code == 404
+
+
+def test_end_preserves_accumulated_progress(client):
+    """Closing a session must not disturb what the reviews already recorded."""
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post("/api/study/session/start?mode=flashcard_jp").json()["session_id"]
+    client.post("/api/study/review", json={"item_id": item["id"], "rating": "good", "session_id": sid})
+
+    assert client.post(f"/api/study/session/{sid}/end").status_code == 200
+    assert client.get("/api/study/dashboard").json()["studied_today"] == 1
+
+
+# ---- Leeches -----------------------------------------------------------------
+
+def _make_leech(client, **overrides):
+    """Fail an item enough times to trip the leech threshold."""
+    item = client.post("/api/items/", json=_make_item(**overrides)).json()
+    for _ in range(8):
+        client.post("/api/study/review", json={"item_id": item["id"], "rating": "again"})
+    return client.get(f"/api/items/{item['id']}").json()
+
+
+def test_repeated_failure_auto_suspends(client):
+    item = _make_leech(client)
+    assert item["suspended"] is True
+    assert item["is_leech"] is True
+    assert item["srs_lapses"] == 8
+
+
+def test_suspended_items_are_excluded_from_due(client):
+    leech = _make_leech(client)
+    healthy = client.post("/api/items/", json=_make_item(japanese="猫")).json()
+
+    ids = [it["id"] for it in client.get("/api/study/due").json()]
+    assert healthy["id"] in ids
+    assert leech["id"] not in ids
+
+
+def test_dashboard_reports_leeches_and_excludes_them_from_due_count(client):
+    _make_leech(client)
+    body = client.get("/api/study/dashboard").json()
+    assert body["suspended_count"] == 1
+    assert len(body["leeches"]) == 1
+    assert body["due_today"] == 0
+    # A suspended card shouldn't also occupy a "needs practice" slot.
+    assert body["weak_items"] == []
+
+
+def test_manual_suspend_and_unsuspend_round_trip(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    assert client.post(f"/api/items/{item['id']}/suspend").json()["suspended"] is True
+    assert client.get("/api/study/due").json() == []
+
+    assert client.post(f"/api/items/{item['id']}/unsuspend").json()["suspended"] is False
+    assert len(client.get("/api/study/due").json()) == 1
+
+
+def test_unsuspend_resets_history_so_the_card_doesnt_instantly_relapse(client):
+    leech = _make_leech(client)
+    restored = client.post(f"/api/items/{leech['id']}/unsuspend").json()
+    assert restored["srs_reviews"] == 0
+    assert restored["srs_lapses"] == 0
+    assert restored["is_leech"] is False
+
+
+def test_unsuspend_can_keep_history(client):
+    leech = _make_leech(client)
+    restored = client.post(f"/api/items/{leech['id']}/unsuspend?reset=false").json()
+    assert restored["suspended"] is False
+    assert restored["srs_reviews"] == 8
+
+
+def test_items_filter_by_suspended(client):
+    leech = _make_leech(client)
+    client.post("/api/items/", json=_make_item(japanese="猫"))
+
+    suspended = client.get("/api/items/?suspended=true").json()
+    assert [i["id"] for i in suspended] == [leech["id"]]
+    assert len(client.get("/api/items/?suspended=false").json()) == 1
+
+
+def test_suspend_404s_across_users(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    r = client.post(f"/api/items/{item['id']}/suspend", headers={"X-User-ID": "other"})
+    assert r.status_code == 404
+
+
+# ---- History -----------------------------------------------------------------
+
+def test_history_is_empty_without_activity(client):
+    assert client.get("/api/study/history").json() == []
+
+
+def test_history_aggregates_graded_sessions_for_today(client):
+    _record_session(client, "flashcard_jp", reviewed=6, correct=3)
+    _record_session(client, "cloze", reviewed=4, correct=3)
+
+    history = client.get("/api/study/history").json()
+    assert len(history) == 1
+    assert history[0]["reviewed"] == 10
+    assert history[0]["correct"] == 6
+    assert history[0]["accuracy"] == 60.0
+
+
+def test_history_excludes_ungraded_modes(client):
+    _record_session(client, "converse", reviewed=5, correct=5)
+    assert client.get("/api/study/history").json() == []
+
+
+def test_history_is_user_scoped(client):
+    _record_session(client, "flashcard_jp", reviewed=4, correct=2)
+    assert client.get("/api/study/history", headers={"X-User-ID": "other"}).json() == []
+
+
+# ---- Cloze (no AI call) ------------------------------------------------------
+
+CLOZE_EXAMPLES = '[{"japanese": "環境が変わりました。", "english": "The environment changed."}]'
+
+
+def test_cloze_question_blanks_the_word(client):
+    item = client.post("/api/items/", json=_make_item(
+        japanese="環境", reading="かんきょう", example_sentences=CLOZE_EXAMPLES,
+    )).json()
+
+    r = client.post(f"/api/generate/question?item_id={item['id']}&mode=cloze")
+    assert r.status_code == 200
+    q = r.json()
+    assert q["type"] == "cloze"
+    assert "環境" not in q["prompt"]
+    assert q["answer"] == "環境"
+    assert "かんきょう" in q["accepted"]
+    assert q["translation"] == "The environment changed."
+
+
+def test_cloze_422s_when_the_word_is_absent_from_every_example(client):
+    item = client.post("/api/items/", json=_make_item(
+        japanese="環境", example_sentences='[{"japanese": "無関係な文。", "english": "Unrelated."}]',
+    )).json()
+    r = client.post(f"/api/generate/question?item_id={item['id']}&mode=cloze")
+    assert r.status_code == 422
+
+
+def test_cloze_422s_without_examples(client):
+    item = client.post("/api/items/", json=_make_item(japanese="環境")).json()
+    assert client.post(f"/api/generate/question?item_id={item['id']}&mode=cloze").status_code == 422
+
+
+def test_cloze_404s_across_users(client):
+    item = client.post("/api/items/", json=_make_item(example_sentences=CLOZE_EXAMPLES)).json()
+    r = client.post(
+        f"/api/generate/question?item_id={item['id']}&mode=cloze", headers={"X-User-ID": "other"}
+    )
+    assert r.status_code == 404
 
 
 # ---- require_item dependency ------------------------------------------------
