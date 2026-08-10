@@ -19,12 +19,13 @@ from .models import Item
 BLANK = "＿＿＿"
 
 
-def _parse_examples(raw: Optional[str]) -> list[dict]:
+def parse_examples(raw: Optional[str]) -> list[dict]:
     """Tolerant parse of the example_sentences JSON-string column.
 
     Mirrors the frontend's ``parseExamples``: the column is LLM-authored with no
     DB-level validation, so malformed values degrade to "no examples" rather
-    than raising.
+    than raising. Public because the enrichment backfill counts stored examples
+    with it — the column has exactly one reader worth trusting.
     """
     if not raw:
         return []
@@ -150,7 +151,7 @@ def build_cloze(item: Item, rng: Optional[random.Random] = None) -> Optional[dic
         return None
 
     matches = []
-    for example in _parse_examples(item.example_sentences):
+    for example in parse_examples(item.example_sentences):
         sentence = example["japanese"]
         span = _find_span(sentence, forms)
         if span:

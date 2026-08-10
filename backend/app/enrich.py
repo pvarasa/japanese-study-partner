@@ -14,8 +14,14 @@ from .llm import complete_json
 
 log = logging.getLogger("app.enrich")
 
+# How many example sentences an item is expected to ship with. The enrichment
+# and extraction prompts both ask for exactly this many, and the backfill tops
+# up anything that came in short — so raising it changes the contract in one
+# place rather than in three prompts that can drift apart.
+EXAMPLES_PER_ITEM = 2
+
 # Matches the house style of the ingest-produced rows: a single practical line
-# (no trailing period) plus exactly two level-appropriate sentences.
+# (no trailing period) plus EXAMPLES_PER_ITEM level-appropriate sentences.
 ENRICH_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
 
 Write a usage note and example sentences for this study item:
@@ -29,8 +35,9 @@ Return ONLY valid JSON with:
   Say something the meaning alone doesn't convey — a common collocation, the form it
   usually appears in, its transitive/intransitive partner, register, or a nuance that
   distinguishes it from a near-synonym. Do NOT restate the English meaning.
-- "example_sentences": array of exactly 2 objects, each {{"japanese": "...", "english": "..."}}.
+- "example_sentences": array of exactly {examples_per_item} objects, each {{"japanese": "...", "english": "..."}}.
   Natural sentences that use the item in context, at JLPT {level} difficulty.
+  Vary the situation between them — don't rephrase one sentence {examples_per_item} ways.
 
 Return ONLY valid JSON, no markdown fences."""
 
@@ -57,6 +64,7 @@ def build_enrichment(
             japanese=japanese,
             reading=reading or "",
             meaning=meaning,
+            examples_per_item=EXAMPLES_PER_ITEM,
         ),
         max_tokens=512,
     )
@@ -80,3 +88,58 @@ def build_enrichment(
         # matching the rows the ingest path writes.
         "example_sentences": json.dumps(examples, ensure_ascii=False) if examples else "",
     }
+
+
+EXAMPLE_SENTENCE_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
+
+Generate ONE natural example sentence using this item:
+- Japanese: {japanese}
+- Reading: {reading}
+- Meaning: {meaning}
+- Type: {type}
+
+Requirements:
+- The sentence must be natural and contextually appropriate
+- Match grammar/vocabulary difficulty to JLPT {level}
+- Use the word/grammar naturally in context
+- Do NOT reuse any of these existing examples: {examples}
+
+Return JSON with:
+- "japanese": the example sentence in Japanese
+- "english": natural English translation
+
+Return ONLY valid JSON."""
+
+
+def build_example_sentence(
+    *,
+    item_type: str,
+    japanese: str,
+    reading: str | None,
+    meaning: str,
+    level: str,
+    existing: str | None = None,
+) -> dict[str, str]:
+    """Generate ONE example sentence that avoids the ones already stored.
+
+    ``existing`` is the item's ``example_sentences`` column verbatim (a JSON
+    string) — it goes into the prompt as the do-not-repeat list. Lives here
+    rather than in the generate router so the backfill's top-up pass and the
+    Study page's "Generate example" button share one prompt.
+
+    Raises on an unusable reply: the endpoint's ``ai_response`` turns that into
+    a 502, and the backfill counts the item as failed so a re-run retries it.
+    """
+    data = complete_json(
+        EXAMPLE_SENTENCE_PROMPT.format(
+            level=level,
+            descriptor=LEVEL_DESCRIPTOR[level],
+            type=item_type,
+            japanese=japanese,
+            reading=reading or "",
+            meaning=meaning,
+            examples=existing or "[]",
+        ),
+        max_tokens=256,
+    )
+    return {"japanese": str(data["japanese"]), "english": str(data["english"])}

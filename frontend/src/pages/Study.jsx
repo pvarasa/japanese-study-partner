@@ -38,6 +38,11 @@ function isAnswerAccepted(userAnswer, question) {
   return accepted.some(a => a.trim() === given)
 }
 
+// How many stored examples the reveal shows. Items are generated with
+// EXAMPLES_PER_ITEM (app/enrich.py) of them, but older ingested rows can carry
+// three or four — cap the card rather than letting its height vary per item.
+const SHOWN_EXAMPLES = 2
+
 // `example_sentences` is a JSON string in a text column, authored by the LLM at
 // ingest time and never validated as parseable. A malformed value used to throw
 // during render and blank the page, so degrade to "no examples" instead.
@@ -416,15 +421,15 @@ export default function Study() {
                 </div>
               )}
               {item.notes && <div className="text-sm text-gray-500 mt-2">{item.notes}</div>}
-              {examples.length > 0 && (
-                <div className="mt-3 text-sm text-left bg-gray-800 rounded-lg p-3">
+              {examples.slice(0, SHOWN_EXAMPLES).map((ex, i) => (
+                <div key={i} className="mt-3 text-sm text-left bg-gray-800 rounded-lg p-3">
                   <div className="flex items-start justify-between gap-1">
-                    <Ruby text={examples[0].japanese} className="text-gray-200" />
-                    <SpeakButton text={examples[0].japanese} className="shrink-0 -mt-1" size={14} />
+                    <Ruby text={ex.japanese} className="text-gray-200" />
+                    <SpeakButton text={ex.japanese} className="shrink-0 -mt-1" size={14} />
                   </div>
-                  <div className="text-gray-500 mt-1">{examples[0].english}</div>
+                  <div className="text-gray-500 mt-1">{ex.english}</div>
                 </div>
-              )}
+              ))}
               <button
                 onClick={async (e) => {
                   e.stopPropagation()

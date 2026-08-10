@@ -38,7 +38,7 @@ jp_study_partner/
 │   │   └── versions/             # Migration scripts
 │   ├── tests/                    # pytest suite: srs, cloze, llm parser, non-AI API smoke
 │   ├── scripts/
-│   │   ├── backfill_enrich.py    # One-off: fill missing notes/examples (one Claude call per item)
+│   │   ├── backfill_enrich.py    # One-off: fill missing notes/examples, top up items short of EXAMPLES_PER_ITEM
 │   │   └── suspend_leeches.py    # One-off: suspend items already past the leech threshold
 │   └── app/
 │       ├── main.py               # FastAPI app, CORS, static file serving, /api/features
@@ -51,7 +51,7 @@ jp_study_partner/
 │       ├── japanese.py           # fugashi tokenizer helpers: annotate, tokenize, reading_for
 │       ├── levels.py             # JLPT level config + per-level prompt tuning, get_jlpt_level
 │       ├── crud.py               # Shared data access: get_item_for_user, get_or_create_tags
-│       ├── enrich.py             # Generates usage notes + example sentences for bare items
+│       ├── enrich.py             # Usage notes + example sentences for bare items; owns EXAMPLES_PER_ITEM
 │       ├── llm.py                # Shared LLM helpers: client construction, error-handling wrapper around messages.create, JSON parsing, ai_response guard
 │       ├── translation.py        # Pluggable JP→EN translation: Claude or local Ollama (TRANSLATION_PROVIDER)
 │       ├── deps.py               # FastAPI dependencies: get_user_id, require_item, Db/UserId/OwnedItem aliases
@@ -106,7 +106,7 @@ The core study unit. Can be a **word**, **grammar** point, or **expression**.
 | reading | text | Hiragana reading |
 | meaning | text | English meaning |
 | notes | text | Usage notes |
-| example_sentences | text | JSON array of `{japanese, english}` |
+| example_sentences | text | JSON array of `{japanese, english}`; items are generated with `EXAMPLES_PER_ITEM` (2) of them |
 | jlpt_level | string | N1-N5 |
 | source_id | int FK | Reference to Source |
 | created_at | datetime | |
@@ -293,6 +293,11 @@ handler that may never run.
 
 1. **JP to EN Flashcard** - See Japanese, recall English meaning
 2. **EN to JP Flashcard** - See English, recall Japanese
+
+Both flashcard modes reveal the usage note and the item's stored example sentences — up to
+`SHOWN_EXAMPLES` (2) of them, capped so the card height doesn't swing on older imported rows
+that carry three or four. "Generate example" adds a further one-off sentence below them.
+
 3. **Cloze** - The word blanked out of one of *its own* stored example sentences, with the English gloss as the hint. Free-form input; **either the kanji or the kana reading counts**, so it's playable without switching to a Japanese IME. Costs no AI call and returns instantly — it reuses `example_sentences`, which every enriched item already has. Rotates among matching sentences so repeat reviews aren't identical. Items whose examples don't actually contain the word are skipped rather than erroring.
 4. **Fill in the Blank** - AI generates a sentence with the target word blanked out, 4 multiple-choice options
 5. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input). On submit, calls `/generate/evaluate` for AI assessment: **correct** (accepts natural variations), **almost there** (right idea, grammar/particle error — shows a corrected version), or **incorrect** (wrong meaning).

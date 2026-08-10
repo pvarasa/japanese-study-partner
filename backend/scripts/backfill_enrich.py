@@ -1,9 +1,20 @@
-"""Backfill usage notes and example sentences for items that never got them.
+"""Backfill usage notes and example sentences for items that came in short.
 
 Items created through POST /api/items/ (Reading page "Add to library", manual
 entry) were stored exactly as handed over, so they lack the notes and example
-sentences the import flow generates. This walks those rows and fills the gaps
-using the same generator the create endpoint now uses.
+sentences the import flow generates. Older rows also predate the
+``EXAMPLES_PER_ITEM`` contract and may carry fewer sentences than a card now
+shows. This walks both kinds of gap using the same generators the live
+endpoints use.
+
+Two passes, picked per item:
+
+* **enrich**  — notes and/or examples missing outright: one Claude call fills
+  both, via the generator ``POST /api/items/?enrich=true`` uses.
+* **top-up**  — has examples but fewer than ``EXAMPLES_PER_ITEM``: one Claude
+  call per missing sentence, appended to what's already there. The existing
+  sentences are kept and passed to the model as a do-not-repeat list, so a
+  reviewed card doesn't lose text it already had.
 
 Usage (from backend/):
 
@@ -11,10 +22,13 @@ Usage (from backend/):
     uv run python -m scripts.backfill_enrich               # apply
     uv run python -m scripts.backfill_enrich --limit 5     # try a few first
 
-Safe to re-run: it only selects rows still missing the fields, so an interrupted
-run resumes where it stopped. Costs one Claude call per item.
+Safe to re-run: gaps are recomputed from the current rows every run, so an
+interrupted run resumes where it stopped and a partly-filled item is picked up
+by whichever pass still applies. Note that --dry-run still makes the Claude
+calls (that's what lets it show the text it would write); it only skips writes.
 """
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -23,29 +37,33 @@ from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import or_
 
 # .env lives at the project root, two levels up from backend/scripts/
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
+from app.cloze import parse_examples  # noqa: E402
 from app.database import SessionLocal, engine  # noqa: E402
-from app.enrich import build_enrichment  # noqa: E402
+from app.enrich import EXAMPLES_PER_ITEM, build_enrichment, build_example_sentence  # noqa: E402
 from app.levels import LEVEL_DESCRIPTOR, get_jlpt_level  # noqa: E402
 from app.models import Item  # noqa: E402
 
-BLANK_EXAMPLES = ("", "[]")
+ENRICH = "enrich"  # notes and/or examples absent
+TOPUP = "topup"    # has examples, but fewer than EXAMPLES_PER_ITEM
 
 
-def _needs_enrichment(q):
-    """Rows missing a usage note or an example-sentence array."""
-    return q.filter(
-        or_(
-            Item.notes.is_(None),
-            Item.notes == "",
-            Item.example_sentences.is_(None),
-            Item.example_sentences.in_(BLANK_EXAMPLES),
-        )
-    )
+def _gap(item: Item) -> str | None:
+    """Classify what an item is missing, or None if it's complete.
+
+    Counting stored examples means parsing the JSON column, which SQL can't do
+    portably across SQLite and PostgreSQL — so this is a Python-side filter over
+    every row rather than a WHERE clause. Fine at library scale.
+    """
+    examples = parse_examples(item.example_sentences)
+    if not item.notes or not examples:
+        return ENRICH
+    if len(examples) < EXAMPLES_PER_ITEM:
+        return TOPUP
+    return None
 
 
 def _backup_sqlite() -> Path | None:
@@ -76,16 +94,29 @@ def main() -> int:
         q = db.query(Item)
         if args.user_id:
             q = q.filter(Item.user_id == args.user_id)
-        items = _needs_enrichment(q).order_by(Item.id).all()
+
+        candidates = []
+        for item in q.order_by(Item.id).all():
+            gap = _gap(item)
+            if gap:
+                candidates.append((item, gap))
 
         if args.limit:
-            items = items[: args.limit]
+            candidates = candidates[: args.limit]
 
-        if not items:
-            print("Nothing to do - every item already has notes and examples.")
+        if not candidates:
+            print(
+                f"Nothing to do - every item has notes and at least "
+                f"{EXAMPLES_PER_ITEM} example sentences."
+            )
             return 0
 
-        print(f"{len(items)} item(s) need enrichment{' (dry run)' if args.dry_run else ''}.")
+        n_topup = sum(1 for _, gap in candidates if gap == TOPUP)
+        print(
+            f"{len(candidates)} item(s) need work "
+            f"({len(candidates) - n_topup} to enrich, {n_topup} to top up)"
+            f"{' (dry run)' if args.dry_run else ''}."
+        )
 
         backup = None
         if not args.dry_run:
@@ -97,7 +128,7 @@ def main() -> int:
         level_cache: dict[str, str] = {}
         filled = skipped = failed = 0
 
-        for n, item in enumerate(items, 1):
+        for n, (item, gap) in enumerate(candidates, 1):
             if item.jlpt_level in LEVEL_DESCRIPTOR:
                 level = item.jlpt_level
             else:
@@ -105,7 +136,40 @@ def main() -> int:
                     level_cache[item.user_id] = get_jlpt_level(db, item.user_id)
                 level = level_cache[item.user_id]
 
-            label = f"[{n}/{len(items)}] {item.japanese}"
+            label = f"[{n}/{len(candidates)}] {item.japanese}"
+
+            if gap == TOPUP:
+                # Append to what's there instead of regenerating the set, so a
+                # sentence the learner has already seen on the card survives.
+                kept = parse_examples(item.example_sentences)
+                added: list[dict] = []
+                try:
+                    while len(kept) + len(added) < EXAMPLES_PER_ITEM:
+                        added.append(build_example_sentence(
+                            item_type=item.type,
+                            japanese=item.japanese,
+                            reading=item.reading,
+                            meaning=item.meaning,
+                            level=level,
+                            # Feed back everything so far, so call two doesn't
+                            # repeat call one.
+                            existing=json.dumps(kept + added, ensure_ascii=False),
+                        ))
+                except Exception as e:
+                    print(f"  {label}: FAILED ({type(e).__name__}: {e})")
+                    failed += 1
+                    continue
+
+                filled += 1
+                print(f"  {label}: had {len(kept)}, +{len(added)} example(s)")
+                if args.verbose or args.dry_run:
+                    for ex in added:
+                        print(f"      {ex['japanese']}  -  {ex['english']}")
+                if not args.dry_run:
+                    item.example_sentences = json.dumps(kept + added, ensure_ascii=False)
+                    db.commit()
+                continue
+
             try:
                 generated = build_enrichment(
                     item_type=item.type,
@@ -124,7 +188,11 @@ def main() -> int:
                 changes.append("notes")
                 if not args.dry_run:
                     item.notes = generated["notes"]
-            if (item.example_sentences or "") in BLANK_EXAMPLES and generated["example_sentences"]:
+            # parse_examples rather than a blank-string check: a row whose column
+            # holds unparseable JSON is just as example-less as an empty one.
+            # If the model returns fewer than EXAMPLES_PER_ITEM here, the row
+            # simply reappears in the top-up pass on the next run.
+            if not parse_examples(item.example_sentences) and generated["example_sentences"]:
                 changes.append("examples")
                 if not args.dry_run:
                     item.example_sentences = generated["example_sentences"]

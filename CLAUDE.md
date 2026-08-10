@@ -35,7 +35,8 @@ cd backend && uv run python -c "from app.main import app; print('OK')"
 # Run backend tests
 cd backend && uv run pytest
 
-# Backfill missing usage notes / example sentences (one Claude call per item)
+# Backfill missing notes/examples and top up items holding fewer than
+# EXAMPLES_PER_ITEM sentences (--dry-run still makes the Claude calls, just no writes)
 cd backend && uv run python -m scripts.backfill_enrich --dry-run
 cd backend && uv run python -m scripts.backfill_enrich
 
@@ -72,8 +73,8 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - `backend/app/deps.py` — FastAPI dependencies: `get_user_id` (reads `X-User-ID`, defaults to `"default"`), `require_item` (resolves `item_id` to a caller-owned Item or 404s), plus the `Db` / `UserId` / `OwnedItem` annotated aliases used across routers
 - `backend/app/levels.py` — JLPT level constants (`VALID_LEVELS`, `LEVEL_DESCRIPTOR`, `READING_LENGTH`, `NEW_WORD_TIER`) and `get_jlpt_level(db, user_id)`. Lives outside `routers/` so ingest/generate/converse don't depend on the settings *router*
 - `backend/app/crud.py` — Shared data access with no HTTP knowledge: `get_item_for_user`, `get_or_create_tags`
-- `backend/app/enrich.py` — Generates the `notes` + `example_sentences` that only the ingest path used to produce. Shared by `POST /api/items/?enrich=true` and `scripts/backfill_enrich.py` so the two can't drift
-- `backend/scripts/backfill_enrich.py` — One-off backfill for items missing notes/examples. `uv run python -m scripts.backfill_enrich --dry-run` to preview; backs up SQLite and commits per item, so it's safe to re-run and resumes after an interruption
+- `backend/app/enrich.py` — Generates the `notes` + `example_sentences` that only the ingest path used to produce, plus `build_example_sentence` for one more sentence that avoids the stored ones. Owns **`EXAMPLES_PER_ITEM`** (currently 2), the single source of truth for how many examples an item ships with — the enrich prompt, the ingest extraction prompt, and the backfill's top-up threshold all read it. Shared by `POST /api/items/?enrich=true`, `POST /generate/example-sentence`, and `scripts/backfill_enrich.py` so they can't drift
+- `backend/scripts/backfill_enrich.py` — One-off backfill, two passes picked per item: **enrich** (notes and/or examples absent → one call fills both) and **top-up** (fewer than `EXAMPLES_PER_ITEM` examples → one call per missing sentence, *appended* so text already on the card survives). `--dry-run` to preview; backs up SQLite and commits per item, so it's safe to re-run and resumes after an interruption
 - `backend/app/srs.py` — Spaced repetition logic (again/hard/good ratings), the two accuracy measures (`pass_rate` counts "hard", `recall_rate` doesn't), and leech detection/auto-suspension
 - `backend/app/cloze.py` — Builds fill-in-the-blank questions from an item's stored `example_sentences`. **No AI call.** Locates the word via exact match, then fugashi lemma matching over token runs, which handles conjugation (済む → 済みました), suru-verb stems (把握する → 把握し), and phrases that inflect internally (手に入れる → 手に入れた). Also splits `・`/`/` alternatives (増える・減る). Returns `None` when no example contains the word — the caller 422s and the frontend skips the item
 - `backend/app/japanese.py` — fugashi tokenizer helpers (`annotate`, `tokenize`, `reading_for`), factored out of `routers/furigana.py` so `cloze.py` doesn't have to import a router (same reasoning as `levels.py`). `routers/furigana.py` re-exports them for back-compat
@@ -120,7 +121,8 @@ cd backend && uv run alembic revision --autogenerate -m "description"  # generat
 - The backend serves `frontend/dist` via `StaticFiles`, which has **no SPA fallback**: deep links like `/study` 404 in production-mode serving. Vite handles them in dev. Navigate via the in-app nav when testing against port 8000
 - `SpeakButton` renders nothing when the browser reports no `ja-*` voice. Headless browsers typically report zero voices, so it's invisible in automated screenshots — that's the gating working, not a bug
 - Only the ingest path generates `notes`/`example_sentences`. `POST /api/items/` stores exactly what it's given unless `?enrich=true`, which the Reading page's "Add to library" now passes. Enrichment failure is non-fatal — the item still saves, bare, and the backfill script can pick it up later
-- `example_sentences` is an LLM-authored JSON string in a text column with no DB-level validation. `IngestItem` coerces the array form the model often returns, and the frontend parses it defensively (`parseExamples` in `Study.jsx`) — don't reintroduce a bare `JSON.parse` on it
+- `example_sentences` is an LLM-authored JSON string in a text column with no DB-level validation. `IngestItem` coerces the array form the model often returns; the backend reads it through `cloze.parse_examples` and the frontend through `parseExamples` in `Study.jsx` — use those, don't reintroduce a bare `JSON.parse`/`json.loads` on it
+- `EXAMPLES_PER_ITEM` is a **floor the prompts request, not an invariant the schema enforces** — nothing rejects a row with one example or trims one with four. The Study card caps its reveal at `SHOWN_EXAMPLES` (`Study.jsx`) for a stable card height, and the backfill's top-up pass fills shortfalls. Raising the constant means re-running the backfill; the older rows aren't rewritten on their own
 - `create_all()` only runs when `DATABASE_URL` is not set (SQLite path); PostgreSQL schema is managed by Alembic
 - `.env` is loaded from project root (`../../.env` relative to `app/main.py`), not from `backend/`; in Docker the file won't exist and env vars come from the container environment directly
 - Vite dev server proxies `/api` to `http://localhost:8000` — in production, backend serves frontend static files from `frontend/dist/`

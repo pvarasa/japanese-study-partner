@@ -1,10 +1,17 @@
 """Tests for note/example enrichment and its opt-in on item creation."""
 import json
+import sys
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app import enrich as enrich_mod
-from app.enrich import build_enrichment
+from app.database import Base
+from app.enrich import build_enrichment, build_example_sentence
+from app.models import Item
+from scripts import backfill_enrich as backfill_mod
+from scripts.backfill_enrich import ENRICH, TOPUP, _gap
 
 
 @pytest.fixture
@@ -169,3 +176,163 @@ def test_enrich_falls_back_to_user_level(client, monkeypatch):
     client.put("/api/settings/", json={"jlpt_level": "N2"})
     client.post("/api/items/?enrich=true", json=_new_word(jlpt_level=None))
     assert seen["level"] == "N2"
+
+
+# ---- single example sentence -------------------------------------------------
+
+ONE_EXAMPLE = '[{"japanese": "天気が変化した。", "english": "The weather changed."}]'
+TWO_EXAMPLES = json.dumps(GOOD_REPLY["example_sentences"], ensure_ascii=False)
+
+
+def _one_sentence(**overrides):
+    kwargs = {
+        "item_type": "word", "japanese": "変化", "reading": "へんか",
+        "meaning": "change", "level": "N3",
+    }
+    kwargs.update(overrides)
+    return build_example_sentence(**kwargs)
+
+
+def test_example_sentence_returns_the_pair(fake_model):
+    fake_model({"japanese": "急な変化。", "english": "A sudden change."})
+    assert _one_sentence() == {"japanese": "急な変化。", "english": "A sudden change."}
+
+
+def test_example_sentence_prompt_lists_what_not_to_repeat(fake_model):
+    """The do-not-repeat list is what keeps a top-up from duplicating example one."""
+    prompts = fake_model({"japanese": "急な変化。", "english": "A sudden change."})
+    _one_sentence(existing=ONE_EXAMPLE)
+    assert "天気が変化した。" in prompts[0]
+
+
+# ---- backfill gap classification ---------------------------------------------
+
+class _Row:
+    """Duck-types the two Item columns _gap reads."""
+
+    def __init__(self, notes, example_sentences):
+        self.notes = notes
+        self.example_sentences = example_sentences
+
+
+@pytest.mark.parametrize("notes, examples, expected", [
+    ("a note", TWO_EXAMPLES, None),        # complete
+    ("a note", ONE_EXAMPLE, TOPUP),        # short by one
+    ("a note", None, ENRICH),              # never enriched
+    ("a note", "[]", ENRICH),
+    ("a note", "{not json", ENRICH),       # unparseable reads as example-less
+    ("", TWO_EXAMPLES, ENRICH),            # examples fine, note missing
+    (None, ONE_EXAMPLE, ENRICH),           # both gaps -> the fuller pass wins
+])
+def test_gap_classification(notes, examples, expected):
+    assert _gap(_Row(notes, examples)) == expected
+
+
+# ---- backfill top-up ---------------------------------------------------------
+
+@pytest.fixture
+def backfill_db(tmp_path, monkeypatch):
+    """Point the script's session factory at a throwaway DB.
+
+    Also stubs the backup step — it reads app.database.engine, which on the
+    default (no DATABASE_URL) path is the developer's real nihongo.db.
+    """
+    engine = create_engine(f"sqlite:///{(tmp_path / 'backfill.db').as_posix()}")
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+
+    monkeypatch.setattr(backfill_mod, "SessionLocal", Session)
+    monkeypatch.setattr(backfill_mod, "_backup_sqlite", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["backfill_enrich"])
+
+    def seed(**overrides):
+        fields = {
+            "user_id": "default", "type": "word", "japanese": "変化",
+            "reading": "へんか", "meaning": "change", "jlpt_level": "N3",
+            "notes": "a note", "example_sentences": ONE_EXAMPLE,
+        }
+        fields.update(overrides)
+        db = Session()
+        db.add(Item(**fields))
+        db.commit()
+        db.close()
+
+    def stored():
+        db = Session()
+        try:
+            return json.loads(db.query(Item).one().example_sentences)
+        finally:
+            db.close()
+
+    return seed, stored, Session
+
+
+def test_topup_appends_and_keeps_the_existing_sentence(backfill_db, monkeypatch):
+    """A card the learner has already seen must not lose the sentence it had."""
+    seed, stored, _ = backfill_db
+    seed()
+    monkeypatch.setattr(
+        backfill_mod, "build_example_sentence",
+        lambda **kw: {"japanese": "急な変化。", "english": "A sudden change."},
+    )
+
+    assert backfill_mod.main() == 0
+
+    examples = stored()
+    assert len(examples) == 2
+    assert examples[0]["japanese"] == "天気が変化した。"  # original, first
+    assert examples[1]["japanese"] == "急な変化。"        # appended
+
+
+def test_topup_does_not_run_the_full_enrichment(backfill_db, monkeypatch):
+    """Topping up costs one cheap call, not a regeneration of notes + both examples."""
+    seed, _, _ = backfill_db
+    seed()
+    monkeypatch.setattr(
+        backfill_mod, "build_example_sentence",
+        lambda **kw: {"japanese": "急な変化。", "english": "A sudden change."},
+    )
+    monkeypatch.setattr(backfill_mod, "build_enrichment", _explode)
+
+    assert backfill_mod.main() == 0
+
+
+def test_dry_run_leaves_the_column_alone(backfill_db, monkeypatch):
+    seed, stored, _ = backfill_db
+    seed()
+    monkeypatch.setattr(
+        backfill_mod, "build_example_sentence",
+        lambda **kw: {"japanese": "急な変化。", "english": "A sudden change."},
+    )
+    monkeypatch.setattr(sys, "argv", ["backfill_enrich", "--dry-run"])
+
+    assert backfill_mod.main() == 0
+    assert len(stored()) == 1
+
+
+def test_complete_items_cost_no_calls(backfill_db, monkeypatch):
+    """The whole sweep is a no-op once every row satisfies the contract."""
+    seed, stored, _ = backfill_db
+    seed(example_sentences=TWO_EXAMPLES)
+    monkeypatch.setattr(backfill_mod, "build_example_sentence", _explode)
+    monkeypatch.setattr(backfill_mod, "build_enrichment", _explode)
+
+    assert backfill_mod.main() == 0
+    assert len(stored()) == 2
+
+
+def test_topup_failure_is_reported_and_leaves_the_row_intact(backfill_db, monkeypatch):
+    seed, stored, _ = backfill_db
+    seed()
+
+    def boom(**kwargs):
+        raise RuntimeError("upstream down")
+
+    monkeypatch.setattr(backfill_mod, "build_example_sentence", boom)
+
+    assert backfill_mod.main() == 1  # non-zero so a re-run is prompted
+    assert len(stored()) == 1
+
+
+def _explode(**kwargs):
+    raise AssertionError(f"unexpected AI call: {kwargs}")

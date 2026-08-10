@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from ..crud import get_or_create_tags
 from ..deps import Db, UserId
+from ..enrich import EXAMPLES_PER_ITEM
 from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
 from ..llm import ai_response, complete_json
 from ..models import Item, Source
@@ -35,7 +36,7 @@ Analyze the following Japanese content and extract study materials. For each ite
 - reading: hiragana reading (for words/expressions)
 - meaning: English meaning
 - notes: brief usage notes if helpful
-- example_sentences: JSON string of array with objects {{"japanese": "...", "english": "..."}}
+- example_sentences: JSON string of an array of exactly {examples_per_item} objects {{"japanese": "...", "english": "..."}}, each using the item naturally in a different situation
 - jlpt_level: estimated JLPT level (N1-N5)
 - tags: relevant tags as array of strings
 
@@ -108,7 +109,10 @@ async def _fetch_url(url: str) -> str:
 
 def _extract_with_llm(text: str, level: str) -> dict:
     prompt = EXTRACT_PROMPT.format(
-        level=level, descriptor=LEVEL_DESCRIPTOR[level], max_items=MAX_ITEMS
+        level=level,
+        descriptor=LEVEL_DESCRIPTOR[level],
+        max_items=MAX_ITEMS,
+        examples_per_item=EXAMPLES_PER_ITEM,
     )
     return complete_json(
         f"{prompt}\n\n---\n\n{text[:MAX_INPUT_CHARS]}", max_tokens=EXTRACT_MAX_TOKENS

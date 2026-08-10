@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ..cloze import build_cloze
 from ..deps import Db, OwnedItem, UserId
+from ..enrich import build_example_sentence
 from ..levels import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
 from ..llm import ai_response, complete_json
 from ..models import Item
@@ -113,44 +114,19 @@ def _cloze_question(item: Item) -> StudyQuestion:
     )
 
 
-EXAMPLE_SENTENCE_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
-
-Generate ONE natural example sentence using this item:
-- Japanese: {japanese}
-- Reading: {reading}
-- Meaning: {meaning}
-- Type: {type}
-
-Requirements:
-- The sentence must be natural and contextually appropriate
-- Match grammar/vocabulary difficulty to JLPT {level}
-- Use the word/grammar naturally in context
-- Do NOT reuse any of these existing examples: {examples}
-
-Return JSON with:
-- "japanese": the example sentence in Japanese
-- "english": natural English translation
-
-Return ONLY valid JSON."""
-
-
 @router.post("/example-sentence", response_model=ExampleSentence)
 def generate_example_sentence(item: OwnedItem, user_id: UserId, db: Db):
     level = get_jlpt_level(db, user_id)
     with ai_response("generate_example_sentence", item_id=item.id):
-        data = complete_json(
-            EXAMPLE_SENTENCE_PROMPT.format(
-                level=level,
-                descriptor=LEVEL_DESCRIPTOR[level],
-                type=item.type,
-                japanese=item.japanese,
-                reading=item.reading or "",
-                meaning=item.meaning,
-                examples=item.example_sentences or "[]",
-            ),
-            max_tokens=256,
+        data = build_example_sentence(
+            item_type=item.type,
+            japanese=item.japanese,
+            reading=item.reading,
+            meaning=item.meaning,
+            level=level,
+            existing=item.example_sentences,
         )
-        return ExampleSentence(japanese=data["japanese"], english=data["english"])
+        return ExampleSentence(**data)
 
 
 READING_PROMPT = """You are a Japanese language teaching assistant for a {descriptor} (JLPT {level}) learner.
