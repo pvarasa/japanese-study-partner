@@ -74,6 +74,9 @@ class SRSReview(BaseModel):
     # When present the server folds this review into the session's counters, so
     # progress survives abandoning the session part-way. See routers/study.py.
     session_id: Optional[int] = None
+    # Practice reps are extra drilling outside the SRS schedule — the server
+    # records the rep but leaves the item's schedule/history untouched.
+    practice: bool = False
 
 
 class SessionProgress(BaseModel):

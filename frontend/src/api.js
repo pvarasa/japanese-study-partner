@@ -49,12 +49,20 @@ export const api = {
 
   // Study
   getDueItems: (params = {}) => request(`/study/due?${qs(params)}`),
+  // Extra reps outside the SRS schedule — any active item, not just due ones.
+  getPracticeItems: (params = {}) => request(`/study/practice?${qs(params)}`),
   // Passing sessionId folds the review into the session's counters server-side,
-  // so progress survives abandoning the session part-way.
-  reviewItem: (itemId, rating, sessionId = null) =>
+  // so progress survives abandoning the session part-way. practice=true skips
+  // SRS scheduling server-side, so it can't reschedule a card early.
+  reviewItem: (itemId, rating, sessionId = null, practice = false) =>
     request('/study/review', {
       method: 'POST',
-      body: { item_id: itemId, rating, ...(sessionId != null && { session_id: sessionId }) },
+      body: {
+        item_id: itemId,
+        rating,
+        ...(sessionId != null && { session_id: sessionId }),
+        ...(practice && { practice: true }),
+      },
     }),
   getDashboard: () => request('/study/dashboard'),
   getHistory: (days = 60) => request(`/study/history?days=${days}`),

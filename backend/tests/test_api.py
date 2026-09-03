@@ -133,6 +133,53 @@ def test_review_again_doesnt_increment_correct(client):
     assert updated["srs_correct"] == 0
 
 
+def test_practice_items_ignores_due_date(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    # Push the item's due date far into the future so it's not "due", the way
+    # a real review would after a few successful ratings.
+    client.post("/api/study/review", json={"item_id": item["id"], "rating": "good"})
+    assert client.get("/api/study/due").json() == []
+
+    ids = [it["id"] for it in client.get("/api/study/practice").json()]
+    assert item["id"] in ids
+
+
+def test_practice_items_excludes_suspended(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    client.post(f"/api/items/{item['id']}/suspend")
+    ids = [it["id"] for it in client.get("/api/study/practice").json()]
+    assert item["id"] not in ids
+
+
+def test_practice_review_does_not_change_srs_fields(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    before = client.get(f"/api/items/{item['id']}").json()
+
+    r = client.post(
+        "/api/study/review",
+        json={"item_id": item["id"], "rating": "good", "practice": True},
+    )
+    assert r.status_code == 200
+
+    after = client.get(f"/api/items/{item['id']}").json()
+    assert after["srs_reviews"] == before["srs_reviews"]
+    assert after["srs_correct"] == before["srs_correct"]
+    assert after["srs_due"] == before["srs_due"]
+
+
+def test_practice_review_still_advances_session_counters(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post("/api/study/session/start?mode=practice_flashcard_jp").json()["session_id"]
+    client.post(
+        "/api/study/review",
+        json={"item_id": item["id"], "rating": "good", "session_id": sid, "practice": True},
+    )
+    body = client.get("/api/study/dashboard").json()
+    # Not a graded mode, so it counts toward activity but not accuracy.
+    assert body["studied_today"] == 1
+    assert body["accuracy_today"] == 0
+
+
 def test_dashboard_shape(client):
     client.post("/api/items/", json=_make_item())
     r = client.get("/api/study/dashboard")

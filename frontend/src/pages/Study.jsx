@@ -59,6 +59,10 @@ function parseExamples(raw) {
 
 export default function Study() {
   const [mode, setMode] = useState(null)
+  // Practice pulls extra reps from the whole library instead of just due
+  // items, and reviewing them doesn't touch SRS scheduling. Toggled on the
+  // mode-selection screen, then fixed for the life of the session.
+  const [practice, setPractice] = useState(false)
   const [items, setItems] = useState([])
   const [current, setCurrent] = useState(0)
   const [revealed, setRevealed] = useState(false)
@@ -101,7 +105,9 @@ export default function Study() {
     setLoading(true)
     setError(null)
     try {
-      const due = await api.getDueItems({ limit: 20 })
+      const due = practice
+        ? await api.getPracticeItems({ limit: 20 })
+        : await api.getDueItems({ limit: 20 })
       if (due.length === 0) {
         setItems([])
         setDone(true)
@@ -121,7 +127,10 @@ export default function Study() {
       setEvaluation(null)
       setDone(false)
       setSessionStats({ reviewed: 0, correct: 0 })
-      const sess = await api.startSession(m)
+      // Distinct mode label keeps practice reps out of accuracy_today and the
+      // retention chart (see GRADED_MODES in routers/study.py) while still
+      // counting toward studied-today and the streak, same as converse turns.
+      const sess = await api.startSession(practice ? `practice_${m}` : m)
       setSessionId(sess.session_id)
 
       if (GENERATED_MODES.includes(m)) {
@@ -175,7 +184,7 @@ export default function Study() {
     try {
       // Passing the session id records this review against the session
       // server-side, so quitting part-way keeps what was already done.
-      await api.reviewItem(item.id, rating, sessionId)
+      await api.reviewItem(item.id, rating, sessionId, practice)
     } catch (err) {
       // Keep the card in place so the user can retry the same rating.
       setError(err.message || RATE_ERROR)
@@ -257,6 +266,31 @@ export default function Study() {
           <h1 className="text-2xl font-bold">Study</h1>
           <LevelBadge />
         </div>
+        <div className="space-y-1.5">
+          <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+            <button
+              onClick={() => setPractice(false)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                !practice ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Due Reviews
+            </button>
+            <button
+              onClick={() => setPractice(true)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                practice ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Practice
+            </button>
+          </div>
+          {practice && (
+            <p className="text-xs text-gray-500">
+              Extra reps from your whole library. Doesn't affect scheduling or leech tracking.
+            </p>
+          )}
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {MODES.map(m => (
             <button
@@ -299,7 +333,9 @@ export default function Study() {
       <div className="text-center py-12 space-y-4">
         <CheckCircle className="mx-auto text-green-400" size={48} />
         <h2 className="text-2xl font-bold">
-          {items.length === 0 ? 'All caught up!' : 'Session Complete!'}
+          {items.length === 0
+            ? (practice ? 'Nothing to practice yet' : 'All caught up!')
+            : 'Session Complete!'}
         </h2>
         {sessionStats.reviewed > 0 && (
           <div className="text-gray-400">
@@ -368,7 +404,8 @@ export default function Study() {
       )}
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs text-gray-500">
-          Scheduled as <span className={RATING_COLOR[derivedRating]}>{RATING_LABEL[derivedRating]}</span>
+          {practice ? 'Rated' : 'Scheduled as'}{' '}
+          <span className={RATING_COLOR[derivedRating]}>{RATING_LABEL[derivedRating]}</span>
         </span>
         <button
           onClick={() => handleRate(derivedRating)}

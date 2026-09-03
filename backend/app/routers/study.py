@@ -56,6 +56,22 @@ def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = N
     return [ItemOut.model_validate(i) for i in items]
 
 
+@router.get("/practice", response_model=list[ItemOut])
+def get_practice_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = None):
+    """Extra reps outside the SRS schedule — any active item, not just due ones.
+
+    For learners who've cleared their due queue and want more drilling.
+    Reviewing these goes through /review with ``practice: true``, which skips
+    ``process_review`` entirely, so it can't reschedule a card early or dodge
+    leech suspension.
+    """
+    q = db.query(Item).filter(Item.user_id == user_id, Item.suspended.is_(False))
+    if type:
+        q = q.filter(Item.type == type)
+    items = q.order_by(func.random()).limit(limit).all()
+    return [ItemOut.model_validate(i) for i in items]
+
+
 def _bump_session(db: Db, session_id: int, user_id: str, *, reviewed=0, correct=0, hard=0):
     """Fold counter deltas into a session, ignoring unknown/foreign sessions.
 
@@ -87,7 +103,8 @@ def review_item(data: SRSReview, user_id: UserId, db: Db):
     item = get_item_for_user(db, data.item_id, user_id)
     if not item:
         raise HTTPException(404, "Item not found")
-    item = process_review(item, data.rating)
+    if not data.practice:
+        item = process_review(item, data.rating)
     if data.session_id is not None:
         _bump_session(
             db, data.session_id, user_id,
