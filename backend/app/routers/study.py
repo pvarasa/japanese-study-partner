@@ -1,3 +1,4 @@
+import random
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -38,11 +39,16 @@ def _local_midnight(day_offset: int = 0) -> datetime:
 
 @router.get("/due", response_model=list[ItemOut])
 def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = None):
-    """Get items due for review, ordered by most overdue first.
+    """Get items due for review.
 
     Suspended leeches are excluded: they're due (their interval never grows
     past the 10-minute floor) but showing them just burns the session on cards
     that have already proven they don't work as written.
+
+    Selection still favors the most overdue items (so a queue longer than
+    ``limit`` doesn't starve the ones waiting longest), but the returned order
+    is shuffled — always drilling the same sequence lets the learner memorize
+    "what comes after X" instead of actually recalling X.
     """
     now = datetime.now(timezone.utc)
     q = db.query(Item).filter(
@@ -53,6 +59,7 @@ def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = N
     if type:
         q = q.filter(Item.type == type)
     items = q.order_by(Item.srs_due.asc()).limit(limit).all()
+    random.shuffle(items)
     return [ItemOut.model_validate(i) for i in items]
 
 
