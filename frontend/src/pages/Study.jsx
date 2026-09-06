@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { RotateCcw, ArrowRight, Zap, CheckCircle, X, Sparkles, Loader2, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { api } from '../api'
 import Ruby from '../components/Ruby'
@@ -57,6 +57,21 @@ function parseExamples(raw) {
   }
 }
 
+/**
+ * Random sample of `n` examples, without replacement. A card whose stored
+ * pool is larger than `n` (older ingests, or backfill top-ups) would
+ * otherwise always reveal the same leading slice — memorizing "the sentence
+ * that goes with this word" instead of recalling the word itself.
+ */
+function pickExamples(examples, n) {
+  const pool = [...examples]
+  const picked = []
+  while (pool.length && picked.length < n) {
+    picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
+  }
+  return picked
+}
+
 export default function Study() {
   const [mode, setMode] = useState(null)
   // Practice pulls extra reps from the whole library instead of just due
@@ -80,6 +95,14 @@ export default function Study() {
   const [evaluating, setEvaluating] = useState(false)
   const [evaluation, setEvaluation] = useState(null)
   const [error, setError] = useState(null)
+
+  // Reshuffled only when the card actually changes (`items` per session,
+  // `current` per card) — not on every re-render — so the picked examples
+  // stay put while the learner reveals/toggles hints on the same card.
+  const shownExamples = useMemo(
+    () => pickExamples(parseExamples(items[current]?.example_sentences), SHOWN_EXAMPLES),
+    [items, current]
+  )
 
   /**
    * Fetch the question for the first item at or after `from` that has one.
@@ -359,7 +382,6 @@ export default function Study() {
 
   const item = items[current]
   const progress = `${current + 1} / ${items.length}`
-  const examples = parseExamples(item.example_sentences)
 
   const ratingButtons = (
     <div className="space-y-2">
@@ -458,7 +480,7 @@ export default function Study() {
                 </div>
               )}
               {item.notes && <div className="text-sm text-gray-500 mt-2">{item.notes}</div>}
-              {examples.slice(0, SHOWN_EXAMPLES).map((ex, i) => (
+              {shownExamples.map((ex, i) => (
                 <div key={i} className="mt-3 text-sm text-left bg-gray-800 rounded-lg p-3">
                   <div className="flex items-start justify-between gap-1">
                     <Ruby text={ex.japanese} className="text-gray-200" />

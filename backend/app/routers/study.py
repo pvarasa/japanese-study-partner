@@ -37,6 +37,19 @@ def _local_midnight(day_offset: int = 0) -> datetime:
     return start + timedelta(days=day_offset)
 
 
+def _active_items(db: Db, user_id: str, type: str | None):
+    """Base query shared by every study-queue endpoint: this user's own,
+    non-suspended items, optionally narrowed to one type."""
+    q = db.query(Item).filter(Item.user_id == user_id, Item.suspended.is_(False))
+    if type:
+        q = q.filter(Item.type == type)
+    return q
+
+
+def _serve(items: list[Item]) -> list[ItemOut]:
+    return [ItemOut.model_validate(i) for i in items]
+
+
 @router.get("/due", response_model=list[ItemOut])
 def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = None):
     """Get items due for review.
@@ -51,16 +64,10 @@ def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = N
     "what comes after X" instead of actually recalling X.
     """
     now = datetime.now(timezone.utc)
-    q = db.query(Item).filter(
-        Item.user_id == user_id,
-        Item.srs_due <= now,
-        Item.suspended.is_(False),
-    )
-    if type:
-        q = q.filter(Item.type == type)
+    q = _active_items(db, user_id, type).filter(Item.srs_due <= now)
     items = q.order_by(Item.srs_due.asc()).limit(limit).all()
     random.shuffle(items)
-    return [ItemOut.model_validate(i) for i in items]
+    return _serve(items)
 
 
 @router.get("/practice", response_model=list[ItemOut])
@@ -68,15 +75,14 @@ def get_practice_items(user_id: UserId, db: Db, limit: int = 20, type: str | Non
     """Extra reps outside the SRS schedule — any active item, not just due ones.
 
     For learners who've cleared their due queue and want more drilling.
+    Sampled uniformly at random (not just shuffled after an ordered fetch,
+    the way /due is) since there's no due-date priority to preserve here.
     Reviewing these goes through /review with ``practice: true``, which skips
     ``process_review`` entirely, so it can't reschedule a card early or dodge
     leech suspension.
     """
-    q = db.query(Item).filter(Item.user_id == user_id, Item.suspended.is_(False))
-    if type:
-        q = q.filter(Item.type == type)
-    items = q.order_by(func.random()).limit(limit).all()
-    return [ItemOut.model_validate(i) for i in items]
+    items = _active_items(db, user_id, type).order_by(func.random()).limit(limit).all()
+    return _serve(items)
 
 
 def _bump_session(db: Db, session_id: int, user_id: str, *, reviewed=0, correct=0, hard=0):
