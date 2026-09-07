@@ -95,6 +95,11 @@ class IngestItem(BaseModel):
     example_sentences: Optional[str] = None
     jlpt_level: Optional[str] = None
     tags: list[str] = []
+    # Set server-side on the extraction response only, when `japanese` matches
+    # an item already in the user's library (or repeats earlier in the same
+    # batch). Not an input field, but accepted here too so the review step's
+    # save request round-trips the same shape without a 422.
+    duplicate: bool = False
 
     @field_validator("example_sentences", mode="before")
     @classmethod

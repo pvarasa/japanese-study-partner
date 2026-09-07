@@ -5,8 +5,9 @@ import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
-from ..crud import get_or_create_tags
+from ..crud import get_existing_japanese, get_or_create_tags
 from ..deps import Db, UserId
 from ..enrich import EXAMPLES_PER_ITEM
 from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
@@ -119,6 +120,22 @@ def _extract_with_llm(text: str, level: str) -> dict:
     )
 
 
+def _mark_duplicates(db: Session, user_id: str, items: list[IngestItem]) -> None:
+    """Flag items already in the user's library, or repeated earlier in this batch.
+
+    Extraction has no visibility into existing items, so re-ingesting the same
+    article (or one that shares vocabulary with another) would otherwise create
+    duplicate rows. The frontend uses this to default-deselect flagged items in
+    the review step rather than blocking the save outright.
+    """
+    existing = get_existing_japanese(db, user_id, [item.japanese for item in items])
+    seen: set[str] = set()
+    for item in items:
+        if item.japanese in existing or item.japanese in seen:
+            item.duplicate = True
+        seen.add(item.japanese)
+
+
 def _pdf_text(content: bytes) -> str:
     """Extract text from PDF bytes. Blocking — call via threadpool."""
     import io
@@ -139,9 +156,11 @@ def ingest_text(user_id: UserId, db: Db, content: str = Form(...)):
     level = get_jlpt_level(db, user_id)
     with ai_response("ingest_text", user_id=user_id):
         result = _extract_with_llm(content, level)
+        items = _parse_items(result.get("items"))
+        _mark_duplicates(db, user_id, items)
         return IngestResponse(
             source_title=result.get("title", "Text input"),
-            items=_parse_items(result.get("items")),
+            items=items,
         )
 
 
@@ -152,9 +171,11 @@ async def ingest_url(user_id: UserId, db: Db, url: str = Form(...)):
     level = get_jlpt_level(db, user_id)
     with ai_response("ingest_url", url=url):
         result = await run_in_threadpool(_extract_with_llm, text, level)
+        items = _parse_items(result.get("items"))
+        _mark_duplicates(db, user_id, items)
         return IngestResponse(
             source_title=result.get("title", url),
-            items=_parse_items(result.get("items")),
+            items=items,
         )
 
 
@@ -177,9 +198,11 @@ async def ingest_pdf(user_id: UserId, db: Db, file: UploadFile = File(...)):
 
     with ai_response("ingest_pdf", filename=file.filename):
         result = await run_in_threadpool(_extract_with_llm, text, level)
+        items = _parse_items(result.get("items"))
+        _mark_duplicates(db, user_id, items)
         return IngestResponse(
             source_title=result.get("title", file.filename or "PDF"),
-            items=_parse_items(result.get("items")),
+            items=items,
         )
 
 
@@ -221,7 +244,7 @@ def save_ingested(
         item = Item(
             user_id=user_id,
             source_id=source.id,
-            **parsed.model_dump(exclude={"tags"}),
+            **parsed.model_dump(exclude={"tags", "duplicate"}),
         )
         item.tags = tags
         db.add(item)

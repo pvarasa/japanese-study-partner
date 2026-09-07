@@ -33,7 +33,9 @@ export default function Ingest() {
         res = await api.ingestPdf(file)
       }
       setResult(res)
-      setSelectedItems(new Set(res.items.map((_, i) => i)))
+      setSelectedItems(new Set(
+        res.items.map((item, i) => [item, i]).filter(([item]) => !item.duplicate).map(([, i]) => i)
+      ))
     } catch (err) {
       setError(err.message || 'Ingestion failed')
     }
@@ -151,7 +153,12 @@ export default function Ingest() {
           <div className="flex justify-between items-center">
             <h2 className="text-lg font-semibold">
               Extracted from: {result.source_title}
-              <span className="text-sm text-gray-500 ml-2">({result.items.length} items)</span>
+              <span className="text-sm text-gray-500 ml-2">
+                ({result.items.length} items
+                {result.items.some(i => i.duplicate) &&
+                  `, ${result.items.filter(i => i.duplicate).length} already in your library`}
+                )
+              </span>
             </h2>
             <div className="flex gap-2">
               <button onClick={() => setSelectedItems(new Set(result.items.map((_, i) => i)))}
@@ -186,6 +193,7 @@ export default function Ingest() {
                       </div>
                     </div>
                     <div className="flex gap-1 shrink-0">
+                      {item.duplicate && <span className="text-xs px-1.5 py-0.5 bg-amber-500/15 rounded text-amber-400">already in library</span>}
                       <span className="text-xs px-1.5 py-0.5 bg-gray-800 rounded text-gray-500">{item.type}</span>
                       {item.jlpt_level && <span className="text-xs px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded">{item.jlpt_level}</span>}
                     </div>

@@ -13,6 +13,18 @@ def get_item_for_user(db: Session, item_id: int, user_id: str) -> Item | None:
     return db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
 
 
+def get_existing_japanese(db: Session, user_id: str, texts: list[str]) -> set[str]:
+    """Which of these japanese strings are already items in the user's library."""
+    if not texts:
+        return set()
+    rows = (
+        db.query(Item.japanese)
+        .filter(Item.user_id == user_id, Item.japanese.in_(texts))
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
 def get_or_create_tags(db: Session, tag_names: list[str]) -> list[Tag]:
     """Resolve tag names to Tag rows, creating any that don't exist yet.
 
