@@ -5,6 +5,7 @@ from fastapi import APIRouter, Form, HTTPException
 from pydantic import BaseModel
 
 from ..cloze import build_cloze
+from ..crud import format_library_lines
 from ..deps import Db, OwnedItem, UserId
 from ..enrich import build_example_sentence
 from ..levels import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
@@ -164,9 +165,7 @@ def generate_reading(user_id: UserId, db: Db, prompt: Optional[str] = Form(None)
 
     # Pick a random subset to encourage variety
     sample = random.sample(items, min(len(items), 15))
-    library_words = "\n".join(
-        f"- {it.japanese} ({it.reading}): {it.meaning}" for it in sample
-    )
+    library_words = format_library_lines(sample)
 
     topic_instruction = ""
     if prompt:

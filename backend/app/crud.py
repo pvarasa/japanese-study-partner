@@ -8,6 +8,12 @@ from sqlalchemy.orm import Session
 from .models import Item, Tag
 
 
+def format_library_lines(items: list[Item]) -> str:
+    """Render items as the "- japanese (reading): meaning" lines several AI
+    prompts (reading passages, conversation starters) use to show library context."""
+    return "\n".join(f"- {it.japanese} ({it.reading}): {it.meaning}" for it in items)
+
+
 def get_item_for_user(db: Session, item_id: int, user_id: str) -> Item | None:
     """Fetch an item scoped to its owner. Returns None if absent or not theirs."""
     return db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
@@ -28,18 +34,23 @@ def get_existing_japanese(db: Session, user_id: str, texts: list[str]) -> set[st
 def get_or_create_tags(db: Session, tag_names: list[str]) -> list[Tag]:
     """Resolve tag names to Tag rows, creating any that don't exist yet.
 
-    Names are normalised to lowercase and blanks are dropped. Flushes so newly
-    created tags have ids before the caller associates them with an item.
+    Names are normalised to lowercase, blanks dropped, and duplicates within the
+    same call collapse to one Tag (otherwise a caller submitting the same name
+    twice would produce duplicate item-tag association rows). Existing tags are
+    fetched in one batched query rather than one round-trip per name. Flushes
+    once so newly created tags have ids before the caller associates them with
+    an item.
     """
-    tags = []
-    for name in tag_names:
-        name = name.strip().lower()
-        if not name:
-            continue
-        tag = db.query(Tag).filter(Tag.name == name).first()
-        if not tag:
+    names = list(dict.fromkeys(n.strip().lower() for n in tag_names if n.strip()))
+    if not names:
+        return []
+
+    by_name = {t.name: t for t in db.query(Tag).filter(Tag.name.in_(names)).all()}
+    for name in names:
+        if name not in by_name:
             tag = Tag(name=name)
             db.add(tag)
-            db.flush()
-        tags.append(tag)
-    return tags
+            by_name[name] = tag
+
+    db.flush()
+    return [by_name[name] for name in names]

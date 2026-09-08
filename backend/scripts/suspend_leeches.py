@@ -15,10 +15,7 @@ calls, it's a pure database sweep. Unsuspend anything you'd rather keep from
 the Library page or the dashboard's "Needs rework" list.
 """
 import argparse
-import os
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,22 +24,11 @@ from sqlalchemy import func
 # .env lives at the project root, two levels up from backend/scripts/
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from app.database import SessionLocal, engine  # noqa: E402
+from app.database import SessionLocal  # noqa: E402
 from app.models import Item  # noqa: E402
 from app.srs import LEECH_MAX_PASS_RATE, LEECH_MIN_REVIEWS, pass_rate  # noqa: E402
 
-
-def _backup_sqlite() -> Path | None:
-    """Copy the SQLite file before writing. No-op on PostgreSQL."""
-    if os.environ.get("DATABASE_URL"):
-        return None
-    db_path = Path(engine.url.database)
-    if not db_path.exists():
-        return None
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = db_path.with_name(f"{db_path.stem}.backup-{stamp}{db_path.suffix}")
-    shutil.copy2(db_path, backup)
-    return backup
+from ._util import backup_sqlite as _backup_sqlite  # noqa: E402
 
 
 def main() -> int:

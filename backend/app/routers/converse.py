@@ -1,8 +1,8 @@
-import random
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 
+from ..crud import format_library_lines
 from ..deps import Db, UserId
 from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
 from ..llm import ai_response, complete_json
@@ -83,11 +83,14 @@ class ReplyOut(BaseModel):
 @router.post("/start", response_model=StartOut)
 def start_conversation(user_id: UserId, db: Db):
     level = get_jlpt_level(db, user_id)
-    items = db.query(Item).filter(Item.user_id == user_id).all()
-    sample = random.sample(items, min(len(items), 8)) if items else []
-    library_words = "\n".join(
-        f"- {it.japanese} ({it.reading}): {it.meaning}" for it in sample
-    ) or "(library empty)"
+    # Sampled at the DB level rather than fetching the whole library and
+    # sampling in Python — unlike /generate/reading, nothing else here needs
+    # the full item set.
+    sample = (
+        db.query(Item).filter(Item.user_id == user_id)
+        .order_by(func.random()).limit(8).all()
+    )
+    library_words = format_library_lines(sample) or "(library empty)"
 
     with ai_response("converse_start", user_id=user_id):
         data = complete_json(

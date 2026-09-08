@@ -50,6 +50,23 @@ def _serve(items: list[Item]) -> list[ItemOut]:
     return [ItemOut.model_validate(i) for i in items]
 
 
+def _to_local_date(dt: datetime) -> date:
+    """Convert a stored timestamp to the server's local calendar date.
+
+    ``started_at`` is stored naive-UTC, so the zone has to be attached before
+    converting to local — otherwise the day boundary drifts from what the
+    dashboard and history chart consider "today".
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().date()
+
+
+# No real streak runs longer than this, so bounding the window keeps the
+# streak calculation to one query instead of one query per day of the streak.
+STREAK_WINDOW_DAYS = 400
+
+
 @router.get("/due", response_model=list[ItemOut])
 def get_due_items(user_id: UserId, db: Db, limit: int = 20, type: str | None = None):
     """Get items due for review.
@@ -182,22 +199,19 @@ def get_dashboard(user_id: UserId, db: Db):
         Item.created_at.desc()
     ).limit(10).all()
 
+    window_start = (today_start_local - timedelta(days=STREAK_WINDOW_DAYS)).astimezone(timezone.utc)
+    streak_sessions = db.query(StudySession).filter(
+        StudySession.user_id == user_id,
+        StudySession.started_at >= window_start,
+        StudySession.items_reviewed > 0,
+    ).all()
+    active_days = {_to_local_date(s.started_at) for s in streak_sessions}
+
     streak = 0
-    day_start_local = today_start_local
-    while True:
-        day_start = day_start_local.astimezone(timezone.utc)
-        day_end = (day_start_local + timedelta(days=1)).astimezone(timezone.utc)
-        day_session = db.query(StudySession).filter(
-            StudySession.user_id == user_id,
-            StudySession.started_at >= day_start,
-            StudySession.started_at < day_end,
-            StudySession.items_reviewed > 0,
-        ).first()
-        if day_session:
-            streak += 1
-            day_start_local -= timedelta(days=1)
-        else:
-            break
+    day = today_start_local.date()
+    while day in active_days:
+        streak += 1
+        day -= timedelta(days=1)
 
     return DashboardStats(
         total_items=total_items,
@@ -230,13 +244,8 @@ def get_history(user_id: UserId, db: Db, days: int = 60):
 
     by_day: dict[date, dict[str, int]] = {}
     for s in sessions:
-        # started_at is stored naive-UTC; attach the zone before converting to
-        # local so the bucket matches the dashboard's notion of a day.
-        started = s.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
         bucket = by_day.setdefault(
-            started.astimezone().date(), {"reviewed": 0, "correct": 0, "hard": 0}
+            _to_local_date(s.started_at), {"reviewed": 0, "correct": 0, "hard": 0}
         )
         bucket["reviewed"] += s.items_reviewed or 0
         bucket["correct"] += s.items_correct or 0

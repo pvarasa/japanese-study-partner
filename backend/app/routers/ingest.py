@@ -148,35 +148,40 @@ def _pdf_text(content: bytes) -> str:
     return "\n".join(text_parts)
 
 
-@router.post("/text", response_model=IngestResponse)
-def ingest_text(user_id: UserId, db: Db, content: str = Form(...)):
-    """Ingest raw Japanese text."""
-    # Plain def so FastAPI runs the blocking Claude extraction in a threadpool
-    # instead of on the event loop, where it would freeze every other request.
+async def _extract_and_respond(
+    db: Session, user_id: str, text: str, op_name: str, default_title: str,
+    log_context: dict,
+) -> IngestResponse:
+    """Shared extract -> validate -> flag-duplicates -> respond pipeline.
+
+    The /text, /url and /pdf endpoints differ only in how they acquire `text`
+    (and what to log/fall back on) — factoring the rest out here means a step
+    added to one can't silently be missing from the other two.
+    """
     level = get_jlpt_level(db, user_id)
-    with ai_response("ingest_text", user_id=user_id):
-        result = _extract_with_llm(content, level)
+    with ai_response(op_name, **log_context):
+        result = await run_in_threadpool(_extract_with_llm, text, level)
         items = _parse_items(result.get("items"))
         _mark_duplicates(db, user_id, items)
         return IngestResponse(
-            source_title=result.get("title", "Text input"),
+            source_title=result.get("title", default_title),
             items=items,
         )
+
+
+@router.post("/text", response_model=IngestResponse)
+async def ingest_text(user_id: UserId, db: Db, content: str = Form(...)):
+    """Ingest raw Japanese text."""
+    return await _extract_and_respond(
+        db, user_id, content, "ingest_text", "Text input", {"user_id": user_id},
+    )
 
 
 @router.post("/url", response_model=IngestResponse)
 async def ingest_url(user_id: UserId, db: Db, url: str = Form(...)):
     """Ingest content from a URL."""
     text = await _fetch_url(url)
-    level = get_jlpt_level(db, user_id)
-    with ai_response("ingest_url", url=url):
-        result = await run_in_threadpool(_extract_with_llm, text, level)
-        items = _parse_items(result.get("items"))
-        _mark_duplicates(db, user_id, items)
-        return IngestResponse(
-            source_title=result.get("title", url),
-            items=items,
-        )
+    return await _extract_and_respond(db, user_id, text, "ingest_url", url, {"url": url})
 
 
 @router.post("/pdf", response_model=IngestResponse)
@@ -186,7 +191,6 @@ async def ingest_pdf(user_id: UserId, db: Db, file: UploadFile = File(...)):
     if not content:
         raise HTTPException(400, "Empty PDF upload")
 
-    level = get_jlpt_level(db, user_id)
     try:
         text = await run_in_threadpool(_pdf_text, content)
     except Exception as e:
@@ -196,14 +200,9 @@ async def ingest_pdf(user_id: UserId, db: Db, file: UploadFile = File(...)):
     if not text.strip():
         raise HTTPException(400, "No extractable text in that PDF (is it a scan?)")
 
-    with ai_response("ingest_pdf", filename=file.filename):
-        result = await run_in_threadpool(_extract_with_llm, text, level)
-        items = _parse_items(result.get("items"))
-        _mark_duplicates(db, user_id, items)
-        return IngestResponse(
-            source_title=result.get("title", file.filename or "PDF"),
-            items=items,
-        )
+    return await _extract_and_respond(
+        db, user_id, text, "ingest_pdf", file.filename or "PDF", {"filename": file.filename},
+    )
 
 
 @router.post("/save")

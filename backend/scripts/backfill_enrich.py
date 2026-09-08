@@ -30,10 +30,7 @@ calls (that's what lets it show the text it would write); it only skips writes.
 import argparse
 import json
 import logging
-import os
-import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -42,10 +39,12 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from app.cloze import parse_examples  # noqa: E402
-from app.database import SessionLocal, engine  # noqa: E402
+from app.database import SessionLocal  # noqa: E402
 from app.enrich import EXAMPLES_PER_ITEM, build_enrichment, build_example_sentence  # noqa: E402
 from app.levels import LEVEL_DESCRIPTOR, get_jlpt_level  # noqa: E402
 from app.models import Item  # noqa: E402
+
+from ._util import backup_sqlite as _backup_sqlite  # noqa: E402
 
 ENRICH = "enrich"  # notes and/or examples absent
 TOPUP = "topup"    # has examples, but fewer than EXAMPLES_PER_ITEM
@@ -64,19 +63,6 @@ def _gap(item: Item) -> str | None:
     if len(examples) < EXAMPLES_PER_ITEM:
         return TOPUP
     return None
-
-
-def _backup_sqlite() -> Path | None:
-    """Copy the SQLite file before writing. No-op on PostgreSQL."""
-    if os.environ.get("DATABASE_URL"):
-        return None
-    db_path = Path(engine.url.database)
-    if not db_path.exists():
-        return None
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = db_path.with_name(f"{db_path.stem}.backup-{stamp}{db_path.suffix}")
-    shutil.copy2(db_path, backup)
-    return backup
 
 
 def main() -> int:

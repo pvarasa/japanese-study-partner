@@ -40,13 +40,18 @@ class TokenizeResponse(BaseModel):
 
 
 @router.post("/annotate", response_model=FuriganaResponse)
-async def annotate_texts(req: FuriganaRequest):
-    """Annotate multiple Japanese texts with furigana ruby HTML."""
+def annotate_texts(req: FuriganaRequest):
+    """Annotate multiple Japanese texts with furigana ruby HTML.
+
+    Plain ``def`` so FastAPI runs the CPU-bound fugashi tokenization in a
+    threadpool rather than on the event loop, where it would stall every
+    other request — same convention as the other blocking routes.
+    """
     return FuriganaResponse(results=[annotate(t) for t in req.texts])
 
 
 @router.post("/tokenize", response_model=TokenizeResponse)
-async def tokenize_text(req: TokenizeRequest):
+def tokenize_text(req: TokenizeRequest):
     """Segment text into tokens with furigana and word meanings for hover."""
     raw_tokens = tokenize(req.text)
 
