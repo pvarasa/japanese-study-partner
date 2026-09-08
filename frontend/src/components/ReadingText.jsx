@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api'
+import { useCloseOnOutside } from '../hooks/useCloseOnOutside'
 
 const isJapanese = (s) => /[぀-ゟ゠-ヿ一-鿿]/.test(s || '')
 
@@ -64,39 +65,15 @@ export default function ReadingText({ text, words = [], className = '' }) {
     setLookups({})
     setSelPopup(null)
     api.tokenize(text, words).then(r => setTokens(r.tokens)).catch(() => {})
-  }, [text])
+  }, [text, words])
 
-  useEffect(() => {
-    if (openIdx === null) return
-    const onDocClick = () => setOpenIdx(null)
-    const t = setTimeout(() => document.addEventListener('click', onDocClick), 0)
-    return () => {
-      clearTimeout(t)
-      document.removeEventListener('click', onDocClick)
-    }
-  }, [openIdx])
+  useCloseOnOutside(openIdx !== null, () => setOpenIdx(null))
 
-  useEffect(() => {
-    if (!selPopup) return
-    const onDocDown = (e) => {
-      if (e.target.closest && e.target.closest('[data-sel-popup]')) return
-      setSelPopup(null)
-    }
-    const onScroll = () => setSelPopup(null)
-    const t = setTimeout(() => {
-      document.addEventListener('mousedown', onDocDown)
-      document.addEventListener('touchstart', onDocDown)
-      window.addEventListener('scroll', onScroll, true)
-      window.addEventListener('resize', onScroll)
-    }, 0)
-    return () => {
-      clearTimeout(t)
-      document.removeEventListener('mousedown', onDocDown)
-      document.removeEventListener('touchstart', onDocDown)
-      window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', onScroll)
-    }
-  }, [selPopup])
+  useCloseOnOutside(!!selPopup, () => setSelPopup(null), {
+    events: ['mousedown', 'touchstart'],
+    ignoreSelector: '[data-sel-popup]',
+    closeOnViewportChange: true,
+  })
 
   const handleSelection = () => {
     setTimeout(() => {

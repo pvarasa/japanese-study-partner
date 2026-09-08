@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Brain, BookOpen, Target, Flame, AlertTriangle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
 import { pct } from '../format'
+import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
 import RetentionChart from '../components/RetentionChart'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
@@ -131,9 +132,9 @@ export default function Dashboard() {
                   <div className="text-sm text-gray-400 truncate">{item.meaning}</div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-xs px-1.5 py-0.5 bg-red-500/15 rounded text-red-400 tabular-nums">
+                  <Badge color="red" className="tabular-nums">
                     {pct(item.pass_rate ?? 0)} · {item.srs_reviews}×
-                  </span>
+                  </Badge>
                   <button
                     onClick={() => restore(item.id)}
                     disabled={restoring === item.id}
@@ -178,9 +179,7 @@ export default function Dashboard() {
                 </div>
                 <div className="text-right">
                   <div className="text-sm text-gray-400">{item.meaning}</div>
-                  <span className="text-xs px-1.5 py-0.5 bg-gray-800 rounded text-gray-500">
-                    {item.type}
-                  </span>
+                  <Badge>{item.type}</Badge>
                 </div>
               </div>
             ))}

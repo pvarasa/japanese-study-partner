@@ -1,6 +1,6 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
 import { BookOpen, Brain, BarChart3, Upload, Menu, X, FileText, Minus, Plus, MessagesSquare } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import ErrorBoundary from './components/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
 import Items from './pages/Items'
@@ -70,9 +70,13 @@ function App() {
     api.updateSettings({ jlpt_level: level }).catch(() => {})
   }
 
+  // Stable identity across renders that don't change the level (menu toggle,
+  // font size, …) so useLevel() consumers elsewhere don't re-render for those.
+  const levelContextValue = useMemo(() => ({ jlptLevel }), [jlptLevel])
+
   return (
     <FeaturesContext.Provider value={features}>
-    <LevelContext.Provider value={{ jlptLevel, setJlptLevel }}>
+    <LevelContext.Provider value={levelContextValue}>
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">

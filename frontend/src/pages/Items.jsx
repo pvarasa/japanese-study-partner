@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Search, Trash2, Edit3, ChevronDown, PauseCircle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
 import { pct } from '../format'
+import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
 import { SkeletonLine } from '../components/Skeleton'
 
@@ -155,12 +156,10 @@ export default function Items() {
                     <div className="text-sm text-gray-400">{item.meaning}</div>
                     {item.notes && <div className="text-xs text-gray-500 mt-0.5">{item.notes}</div>}
                     <div className="flex flex-wrap gap-1 mt-1">
-                      <span className="text-xs px-1.5 py-0.5 bg-gray-800 rounded text-gray-500">{item.type}</span>
-                      {item.jlpt_level && <span className="text-xs px-1.5 py-0.5 bg-indigo-500/15 rounded text-indigo-400">{item.jlpt_level}</span>}
-                      {item.suspended && (
-                        <span className="text-xs px-1.5 py-0.5 bg-amber-500/15 rounded text-amber-400">suspended</span>
-                      )}
-                      {item.tags?.map(t => <span key={t} className="text-xs px-1.5 py-0.5 bg-green-500/15 rounded text-green-400">{t}</span>)}
+                      <Badge>{item.type}</Badge>
+                      {item.jlpt_level && <Badge color="indigo">{item.jlpt_level}</Badge>}
+                      {item.suspended && <Badge color="amber">suspended</Badge>}
+                      {item.tags?.map(t => <Badge key={t} color="green">{t}</Badge>)}
                     </div>
                   </div>
                   <div className="flex gap-1 ml-4 shrink-0">

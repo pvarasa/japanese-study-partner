@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Upload, Link, FileText, Check, X, Loader2 } from 'lucide-react'
 import { api } from '../api'
+import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
 
 const inputClass = "w-full bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
@@ -193,9 +194,9 @@ export default function Ingest() {
                       </div>
                     </div>
                     <div className="flex gap-1 shrink-0">
-                      {item.duplicate && <span className="text-xs px-1.5 py-0.5 bg-amber-500/15 rounded text-amber-400">already in library</span>}
-                      <span className="text-xs px-1.5 py-0.5 bg-gray-800 rounded text-gray-500">{item.type}</span>
-                      {item.jlpt_level && <span className="text-xs px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded">{item.jlpt_level}</span>}
+                      {item.duplicate && <Badge color="amber">already in library</Badge>}
+                      <Badge>{item.type}</Badge>
+                      {item.jlpt_level && <Badge color="indigo">{item.jlpt_level}</Badge>}
                     </div>
                   </div>
                 </div>
