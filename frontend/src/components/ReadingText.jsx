@@ -50,7 +50,11 @@ function selectionTextSkippingRuby(sel, root) {
   return out
 }
 
-export default function ReadingText({ text, words = [], className = '' }) {
+// Shared default: a fresh `[]` per render would change the tokenize effect's
+// dependencies every time and refetch in a loop.
+const NO_WORDS = []
+
+export default function ReadingText({ text, words = NO_WORDS, className = '' }) {
   const [tokens, setTokens] = useState(null)
   const [openIdx, setOpenIdx] = useState(null)
   const [lookups, setLookups] = useState({})

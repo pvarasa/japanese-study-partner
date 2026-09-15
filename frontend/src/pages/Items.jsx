@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Search, Trash2, Edit3, ChevronDown, PauseCircle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
 import { pct } from '../format'
@@ -23,33 +24,60 @@ const STATUS = [
   { value: 'suspended', label: 'Suspended' },
 ]
 
+// Filters live in the URL rather than component state, so a reload (e.g. the
+// browser restoring a discarded tab) or back/forward lands on the same view.
 export default function Items() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const typeFilter = searchParams.get('type') || 'all'
+  const levelFilter = searchParams.get('level') || 'all'
+  const accuracyFilter = searchParams.get('accuracy') || 'all'
+  const statusFilter = searchParams.get('status') || 'all'
+  // The submitted search; the input below holds what's being typed.
+  const query = searchParams.get('q') || ''
+
   const [items, setItems] = useState([])
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('all')
-  const [levelFilter, setLevelFilter] = useState('all')
-  const [accuracyFilter, setAccuracyFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [search, setSearch] = useState(query)
   const [loading, setLoading] = useState(true)
+  const [reloadKey, setReloadKey] = useState(0)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({})
 
-  const load = () => {
+  const setFilter = (key, value) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value && value !== 'all') next.set(key, value)
+      else next.delete(key)
+      return next
+    }, { replace: true })
+  }
+
+  // Keep the box in step when the URL changes underneath it (back/forward).
+  useEffect(() => { setSearch(query) }, [query])
+
+  useEffect(() => {
     const params = {}
     if (typeFilter !== 'all') params.type = typeFilter
     if (levelFilter !== 'all') params.jlpt_level = levelFilter
     if (accuracyFilter !== 'all') params.accuracy = accuracyFilter
     if (statusFilter !== 'all') params.suspended = statusFilter === 'suspended'
-    if (search) params.search = search
+    if (query) params.search = query
+    let cancelled = false
     setLoading(true)
-    api.getItems(params).then(setItems).catch(console.error).finally(() => setLoading(false))
-  }
+    api.getItems(params)
+      .then((res) => { if (!cancelled) setItems(res) })
+      .catch(console.error)
+      .finally(() => { if (!cancelled) setLoading(false) })
+    // A slower response for filters the user has already moved past must not
+    // overwrite the current list.
+    return () => { cancelled = true }
+  }, [typeFilter, levelFilter, accuracyFilter, statusFilter, query, reloadKey])
 
-  useEffect(() => { load() }, [typeFilter, levelFilter, accuracyFilter, statusFilter])
+  const load = () => setReloadKey(k => k + 1)
 
   const handleSearch = (e) => {
     e.preventDefault()
-    load()
+    if (search.trim() === query) load()
+    else setFilter('q', search.trim())
   }
 
   const handleDelete = async (id) => {
@@ -96,15 +124,15 @@ export default function Items() {
         </form>
         <div className="flex flex-wrap gap-2">
           {[
-            { value: typeFilter, onChange: setTypeFilter, options: TYPES.map(t => ({ value: t, label: t === 'all' ? 'All types' : t.charAt(0).toUpperCase() + t.slice(1) })) },
-            { value: levelFilter, onChange: setLevelFilter, options: LEVELS.map(l => ({ value: l, label: l === 'all' ? 'All levels' : l })) },
-            { value: accuracyFilter, onChange: setAccuracyFilter, options: ACCURACY.map(a => ({ value: a.value, label: a.label })) },
-            { value: statusFilter, onChange: setStatusFilter, options: STATUS.map(s => ({ value: s.value, label: s.label })) },
+            { key: 'type', value: typeFilter, options: TYPES.map(t => ({ value: t, label: t === 'all' ? 'All types' : t.charAt(0).toUpperCase() + t.slice(1) })) },
+            { key: 'level', value: levelFilter, options: LEVELS.map(l => ({ value: l, label: l === 'all' ? 'All levels' : l })) },
+            { key: 'accuracy', value: accuracyFilter, options: ACCURACY.map(a => ({ value: a.value, label: a.label })) },
+            { key: 'status', value: statusFilter, options: STATUS.map(s => ({ value: s.value, label: s.label })) },
           ].map((sel, i) => (
             <div key={i} className="relative">
               <select
                 value={sel.value}
-                onChange={e => sel.onChange(e.target.value)}
+                onChange={e => setFilter(sel.key, e.target.value)}
                 className="appearance-none bg-gray-900 border border-gray-700 text-gray-100 rounded-lg px-3 py-2 pr-8 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
               >
                 {sel.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}

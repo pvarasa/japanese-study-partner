@@ -1,29 +1,46 @@
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Upload, Link, FileText, Check, X, Loader2 } from 'lucide-react'
 import { api } from '../api'
 import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
+import { usePersistentState } from '../hooks/usePersistentState'
 
 const inputClass = "w-full bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
 
+// Extraction is a slow, paid AI call, so its unsaved result is persisted —
+// switching apps while reviewing it shouldn't mean running it again. A day is
+// plenty to finish reviewing; after that it's clutter.
+const DRAFT_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const NO_EXTRACTION = { result: null, selected: [], saved: false }
+
 export default function Ingest() {
-  const [tab, setTab] = useState('text')
-  const [text, setText] = useState('')
-  const [url, setUrl] = useState('')
+  const [input, setInput] = usePersistentState(
+    'ingest-input', { tab: 'text', text: '', url: '' }, { maxAgeMs: DRAFT_MAX_AGE_MS }
+  )
+  // The result and its selection share one entry: `selected` holds indices
+  // into `result.items`, so the two must never be restored out of step.
+  const [extraction, setExtraction] = usePersistentState(
+    'ingest-extraction', NO_EXTRACTION, { maxAgeMs: DRAFT_MAX_AGE_MS }
+  )
+  // A File can't be serialised; after a reload the PDF has to be re-picked.
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [error, setError] = useState(null)
+  // Bumped when the input is switched or reset, so an extraction still in
+  // flight for the old input doesn't land on top of the new one.
+  const requestRef = useRef(0)
 
-  const [selectedItems, setSelectedItems] = useState(new Set())
+  const { tab, text, url } = input
+  const { result, saved } = extraction
+  const selectedItems = useMemo(() => new Set(extraction.selected), [extraction.selected])
+  const setSelected = (indices) => setExtraction(prev => ({ ...prev, selected: [...indices] }))
 
   const handleIngest = async () => {
+    const request = ++requestRef.current
     setLoading(true)
     setError(null)
-    setResult(null)
-    setSaved(false)
+    setExtraction(NO_EXTRACTION)
     try {
       let res
       if (tab === 'text') {
@@ -33,26 +50,30 @@ export default function Ingest() {
       } else {
         res = await api.ingestPdf(file)
       }
-      setResult(res)
-      setSelectedItems(new Set(
-        res.items.map((item, i) => [item, i]).filter(([item]) => !item.duplicate).map(([, i]) => i)
-      ))
+      if (requestRef.current !== request) return
+      setExtraction({
+        result: res,
+        selected: res.items.map((item, i) => [item, i]).filter(([item]) => !item.duplicate).map(([, i]) => i),
+        saved: false,
+      })
     } catch (err) {
-      setError(err.message || 'Ingestion failed')
+      if (requestRef.current === request) setError(err.message || 'Ingestion failed')
+    } finally {
+      if (requestRef.current === request) setLoading(false)
     }
-    setLoading(false)
   }
 
   const toggleItem = (idx) => {
     const next = new Set(selectedItems)
     if (next.has(idx)) next.delete(idx)
     else next.add(idx)
-    setSelectedItems(next)
+    setSelected(next)
   }
 
   const handleSave = async () => {
     if (!result || selectedItems.size === 0) return
     setSaving(true)
+    setError(null)
     const items = result.items
       .filter((_, i) => selectedItems.has(i))
       .map(item => ({
@@ -67,11 +88,19 @@ export default function Ingest() {
       }))
     try {
       await api.saveIngested(result.source_title, tab, tab === 'url' ? url : null, items)
-      setSaved(true)
+      setExtraction(prev => ({ ...prev, saved: true }))
     } catch (err) {
       setError(err.message)
     }
     setSaving(false)
+  }
+
+  const switchTab = (id) => {
+    requestRef.current++
+    setLoading(false)
+    setInput(prev => ({ ...prev, tab: id }))
+    setExtraction(NO_EXTRACTION)
+    setError(null)
   }
 
   const tabs = [
@@ -89,7 +118,7 @@ export default function Ingest() {
         {tabs.map(t => (
           <button
             key={t.id}
-            onClick={() => { setTab(t.id); setResult(null); setSaved(false); setError(null) }}
+            onClick={() => switchTab(t.id)}
             className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors ${
               tab === t.id ? 'bg-gray-700 shadow text-indigo-400' : 'text-gray-400 hover:text-gray-200'
             }`}
@@ -105,7 +134,7 @@ export default function Ingest() {
         {tab === 'text' && (
           <textarea
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={e => setInput(prev => ({ ...prev, text: e.target.value }))}
             rows={6}
             className={`${inputClass} jp-text`}
             placeholder="Paste Japanese text here... Articles, notes, example sentences, etc."
@@ -114,7 +143,7 @@ export default function Ingest() {
         {tab === 'url' && (
           <input
             value={url}
-            onChange={e => setUrl(e.target.value)}
+            onChange={e => setInput(prev => ({ ...prev, url: e.target.value }))}
             className={inputClass}
             placeholder="https://example.com/japanese-article"
           />
@@ -162,9 +191,9 @@ export default function Ingest() {
               </span>
             </h2>
             <div className="flex gap-2">
-              <button onClick={() => setSelectedItems(new Set(result.items.map((_, i) => i)))}
+              <button onClick={() => setSelected(result.items.map((_, i) => i))}
                 className="text-sm text-indigo-400 hover:underline">Select all</button>
-              <button onClick={() => setSelectedItems(new Set())}
+              <button onClick={() => setSelected([])}
                 className="text-sm text-gray-500 hover:underline">Deselect all</button>
             </div>
           </div>
@@ -220,7 +249,11 @@ export default function Ingest() {
           <Check className="mx-auto text-green-400 mb-2" size={32} />
           <p className="text-green-300 font-medium">Items saved successfully!</p>
           <button
-            onClick={() => { setResult(null); setSaved(false); setText(''); setUrl(''); setFile(null) }}
+            onClick={() => {
+              setExtraction(NO_EXTRACTION)
+              setInput(prev => ({ ...prev, text: '', url: '' }))
+              setFile(null)
+            }}
             className="mt-3 text-sm text-indigo-400 hover:underline"
           >
             Import more content

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Volume2 } from 'lucide-react'
 
 /**
@@ -19,7 +19,7 @@ function loadJapaneseVoice() {
   // shared, so every button doesn't re-subscribe.
   if (voicePromise) return voicePromise
 
-  voicePromise = new Promise((resolve) => {
+  const attempt = new Promise((resolve) => {
     const synth = window.speechSynthesis
     if (!synth) return resolve(null)
 
@@ -40,7 +40,12 @@ function loadJapaneseVoice() {
     // Some browsers never fire the event when there's nothing to load.
     setTimeout(() => done(pick()), 1500)
   })
-  return voicePromise
+  voicePromise = attempt
+  // Only a found voice is cached. Voices that were merely slow to load (a tab
+  // restored in the background, a busy device) would otherwise hide every
+  // speaker button until the next full page load.
+  attempt.then((v) => { if (!v && voicePromise === attempt) voicePromise = null })
+  return attempt
 }
 
 export default function SpeakButton({ text, className = '', size = 15, label = 'Read aloud' }) {
@@ -51,6 +56,30 @@ export default function SpeakButton({ text, className = '', size = 15, label = '
     let alive = true
     loadJapaneseVoice().then(v => { if (alive) setVoice(v) })
     return () => { alive = false }
+  }, [])
+
+  // Stop mid-sentence when the button goes away (the card advanced, the page
+  // changed) or the tab is hidden. Mobile browsers cut speech off in the
+  // background without always firing onend, which would leave the button
+  // pulsing; and speech outliving its card reads the wrong sentence over the
+  // next one.
+  useEffect(() => {
+    if (!speaking) return
+    const stop = () => {
+      window.speechSynthesis?.cancel()
+      setSpeaking(false)
+    }
+    const onVisibilityChange = () => { if (document.hidden) stop() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [speaking])
+
+  const speakingRef = useRef(false)
+  useEffect(() => { speakingRef.current = speaking }, [speaking])
+  useEffect(() => () => {
+    if (speakingRef.current) window.speechSynthesis?.cancel()
   }, [])
 
   // No Japanese voice on this machine — render nothing rather than a button

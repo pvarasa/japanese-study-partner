@@ -7,8 +7,8 @@ import { CLOZE_BLANK, RATING_COLOR, RATING_LABEL, isAnswerAccepted } from './stu
 export default function QuestionCard({
   mode, question, userAnswer, setUserAnswer, answerChecked, checkAnswer,
   evaluating, evaluation, hintsRevealed, setHintsRevealed,
-  translationRevealed, setTranslationRevealed, error, retryQuestion,
-  exitStudy, onRate, practice, progress,
+  translationRevealed, setTranslationRevealed, error, retry,
+  exitStudy, submitting, onRate, practice, progress,
 }) {
   // AI-question modes (fill_blank, grammar_drill, sentence_build) have an
   // objectively correct answer, so the SRS rating is derived from correctness
@@ -31,7 +31,8 @@ export default function QuestionCard({
         </span>
         <button
           onClick={() => onRate(derivedRating)}
-          className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-500 flex items-center gap-1.5"
+          disabled={submitting}
+          className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-medium hover:bg-indigo-500 disabled:opacity-50 flex items-center gap-1.5"
         >
           Next <ArrowRight size={16} />
         </button>
@@ -151,7 +152,19 @@ export default function QuestionCard({
               <div className="border-t border-gray-700 pt-4 flex items-center gap-2 text-gray-500 text-sm">
                 <Loader2 size={15} className="animate-spin" /> Evaluating your answer…
               </div>
-            ) : evaluation && (() => {
+            ) : !evaluation ? (
+              error && (
+                <div className="border-t border-gray-700 pt-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm text-red-300">
+                    <AlertCircle size={15} /> {error}
+                  </div>
+                  <button onClick={retry}
+                    className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
+                    Try again
+                  </button>
+                </div>
+              )
+            ) : (() => {
               const { verdict, feedback, corrected } = evaluation
               const isCorrect = verdict === 'correct'
               const isPartial = verdict === 'partial'
@@ -230,7 +243,7 @@ export default function QuestionCard({
           <X className="mx-auto text-red-400" size={28} />
           <div className="text-sm text-red-300/90">{error}</div>
           <div className="flex gap-2 justify-center pt-1">
-            <button onClick={retryQuestion}
+            <button onClick={retry}
               className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
               Try again
             </button>

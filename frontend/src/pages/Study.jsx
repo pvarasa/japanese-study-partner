@@ -1,9 +1,9 @@
-import { CheckCircle } from 'lucide-react'
+import { CheckCircle, X } from 'lucide-react'
 import LevelBadge from '../components/LevelBadge'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
 import FlashcardCard from './study/FlashcardCard'
 import QuestionCard from './study/QuestionCard'
-import { MODES } from './study/studyLogic'
+import { MODES, START_ERROR } from './study/studyLogic'
 import { useStudySession } from './study/useStudySession'
 
 export default function Study() {
@@ -109,6 +109,27 @@ export default function Study() {
   }
 
   const item = s.items[s.current]
+
+  // Starting failed before any cards arrived.
+  if (!item) {
+    return (
+      <div className="max-w-lg mx-auto bg-gray-900 rounded-2xl border border-red-500/30 p-6 space-y-3 text-center">
+        <X className="mx-auto text-red-400" size={28} />
+        <div className="text-sm text-red-300/90">{s.error || START_ERROR}</div>
+        <div className="flex gap-2 justify-center pt-1">
+          <button onClick={() => s.startStudy(s.mode)}
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
+            Try again
+          </button>
+          <button onClick={s.exitStudy}
+            className="border border-gray-700 text-gray-300 px-4 py-2 rounded-lg hover:bg-gray-800 text-sm">
+            Back to modes
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const progress = `${s.current + 1} / ${s.items.length}`
 
   if (s.mode === 'flashcard_jp' || s.mode === 'flashcard_en') {
@@ -124,6 +145,7 @@ export default function Study() {
         generatingExample={s.generatingExample}
         generateExample={s.generateExample}
         error={s.error}
+        submitting={s.submitting}
         onRate={s.handleRate}
         exitStudy={s.exitStudy}
       />
@@ -145,8 +167,9 @@ export default function Study() {
       translationRevealed={s.translationRevealed}
       setTranslationRevealed={s.setTranslationRevealed}
       error={s.error}
-      retryQuestion={s.retryQuestion}
+      retry={s.retry}
       exitStudy={s.exitStudy}
+      submitting={s.submitting}
       onRate={s.handleRate}
       practice={s.practice}
       progress={progress}

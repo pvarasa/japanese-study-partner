@@ -1,29 +1,15 @@
 import { useState, useEffect } from 'react'
+import { loadValue, saveValue } from '../storage'
 
-// useState that mirrors its value to localStorage, so generated content
-// survives a full page reload. Mobile browsers commonly discard a
-// backgrounded tab and reload it fresh when you switch back, which would
-// otherwise wipe in-memory React state (e.g. a generated reading passage).
-export function usePersistentState(key, initialValue) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = localStorage.getItem(key)
-      return stored !== null ? JSON.parse(stored) : initialValue
-    } catch {
-      return initialValue
-    }
-  })
+// useState that mirrors its value to localStorage, so it survives the page
+// being reloaded out from under the user (see storage.js for why that happens
+// so often on mobile). `maxAgeMs` drops a value that hasn't been written for
+// that long, for state that shouldn't resurface the next day.
+export function usePersistentState(key, initialValue, { maxAgeMs } = {}) {
+  const [value, setValue] = useState(() => loadValue(key, initialValue, { maxAgeMs }))
 
   useEffect(() => {
-    try {
-      if (value === undefined || value === null) {
-        localStorage.removeItem(key)
-      } else {
-        localStorage.setItem(key, JSON.stringify(value))
-      }
-    } catch {
-      // storage unavailable or full — degrade to in-memory only
-    }
+    saveValue(key, value)
   }, [key, value])
 
   return [value, setValue]

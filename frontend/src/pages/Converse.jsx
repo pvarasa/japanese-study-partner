@@ -1,22 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, Square, Loader2, Send, RefreshCw, CheckCircle, MessagesSquare, ArrowRight } from 'lucide-react'
 import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
 import { useFeatures } from '../context/FeaturesContext'
+import { loadValue, saveValue } from '../storage'
 
 const MAX_RECORD_MS = 30_000
 
+// The conversation is persisted as one snapshot, so leaving the page (or the
+// browser reloading the tab after an app switch) resumes it mid-thread.
+const CONVERSATION_KEY = 'converse-session'
+const CONVERSATION_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
 export default function Converse() {
   const { whisperEnabled } = useFeatures()
+  const [restored] = useState(() => loadValue(CONVERSATION_KEY, null, { maxAgeMs: CONVERSATION_MAX_AGE_MS }))
   const [starting, setStarting] = useState(false)
-  const [topic, setTopic] = useState(null)
-  const [question, setQuestion] = useState(null)
-  const [questionHint, setQuestionHint] = useState('')
-  const [history, setHistory] = useState([])  // {role, content}
-  const [userText, setUserText] = useState('')
+  const [topic, setTopic] = useState(restored?.topic ?? null)
+  const [question, setQuestion] = useState(restored?.question ?? null)
+  const [questionHint, setQuestionHint] = useState(restored?.questionHint ?? '')
+  const [history, setHistory] = useState(restored?.history ?? [])  // {role, content}
+  const [userText, setUserText] = useState(restored?.userText ?? '')
   const [submitting, setSubmitting] = useState(false)
-  const [feedback, setFeedback] = useState(null)  // ReplyOut
+  const [feedback, setFeedback] = useState(restored?.feedback ?? null)  // ReplyOut
   const [error, setError] = useState(null)
 
   // Recording state
@@ -26,47 +33,50 @@ export default function Converse() {
   const mediaRecorderRef = useRef(null)
   const chunksRef = useRef([])
   const recordTimeoutRef = useRef(null)
+  // Set on unmount so a recording stopped by the cleanup isn't sent off for
+  // transcription into a page that no longer exists.
+  const unmountedRef = useRef(false)
 
-  // Session tracking. A ref (not state) so the unmount cleanup and
-  // startConversation see the current id without re-subscribing effects.
+  // Turn counts aren't tracked here — each turn posts its own increment to
+  // the server as it happens. Conversation still reports corrections-free
+  // turns as "correct", but the dashboard excludes converse from accuracy
+  // entirely, since a conversation has no right answer.
   //
-  // Turn counts aren't tracked here any more — each turn posts its own
-  // increment to the server as it happens. Conversation still reports
-  // corrections-free turns as "correct", but the dashboard excludes converse
-  // from accuracy entirely, since a conversation has no right answer.
-  const sessionIdRef = useRef(null)
-
-  const endSession = async () => {
-    const id = sessionIdRef.current
-    if (id == null) return
-    sessionIdRef.current = null
-    try {
-      // Counts are omitted deliberately: each turn already recorded itself, so
-      // passing totals here would only risk overwriting them from a cleanup
-      // path that may or may not complete.
-      await api.endSession(id)
-    } catch { /* ignore — the turns themselves are already recorded */ }
-  }
+  // The session is deliberately *not* ended on unmount: the conversation
+  // resumes when the learner comes back, and a fetch fired from an unmount
+  // path is unreliable anyway. Starting a new topic closes it.
+  const [sessionId, setSessionId] = useState(restored?.sessionId ?? null)
 
   useEffect(() => {
-    return () => { endSession() }
-  }, [])
+    saveValue(CONVERSATION_KEY, question
+      ? { topic, question, questionHint, history, userText, feedback, sessionId }
+      : null)
+  }, [topic, question, questionHint, history, userText, feedback, sessionId])
+
+  const endSession = () => {
+    if (sessionId == null) return
+    setSessionId(null)
+    // Counts are omitted deliberately: each turn already recorded itself.
+    api.endSession(sessionId).catch(() => { /* the turns themselves are already recorded */ })
+  }
 
   const startConversation = async () => {
     setStarting(true)
     setError(null)
-    setFeedback(null)
-    setHistory([])
-    setUserText('')
     try {
-      await endSession()
       const sess = await api.startSession('converse')
-      sessionIdRef.current = sess.session_id
+      endSession()
+      setSessionId(sess.session_id)
 
       const s = await api.converseStart()
       setTopic(s.topic)
       setQuestion(s.question)
       setQuestionHint(s.english_hint)
+      // Cleared only once the new topic has arrived, so a failed start
+      // leaves the current conversation on screen.
+      setFeedback(null)
+      setHistory([])
+      setUserText('')
     } catch (err) {
       setError(err.message || 'Failed to start')
     }
@@ -92,8 +102,8 @@ export default function Converse() {
       // Record the turn as it happens. This used to be reported only from the
       // unmount cleanup, and an async fetch fired during unmount or tab-close
       // routinely never lands — every conversation ever held recorded zero.
-      if (sessionIdRef.current != null) {
-        api.sessionProgress(sessionIdRef.current, {
+      if (sessionId != null) {
+        api.sessionProgress(sessionId, {
           reviewed: 1,
           correct: clean ? 1 : 0,
         }).catch(() => { /* the conversation matters more than the counter */ })
@@ -106,12 +116,26 @@ export default function Converse() {
 
   const continueConversation = () => {
     if (!feedback) return
+    // The follow-up becomes the current question; submitAnswer adds it to the
+    // history when it's answered. Appending it here too sent every question
+    // after the first to the tutor twice.
     setQuestion(feedback.follow_up)
     setQuestionHint(feedback.follow_up_hint)
-    setHistory((h) => [...h, { role: 'tutor', content: feedback.follow_up }])
     setFeedback(null)
     setUserText('')
   }
+
+  // Only touches refs and a state setter, so it's stable across renders and
+  // safe to hand to the listeners and effects below.
+  const stopRecording = useCallback(() => {
+    if (recordTimeoutRef.current) {
+      clearTimeout(recordTimeoutRef.current)
+      recordTimeoutRef.current = null
+    }
+    const mr = mediaRecorderRef.current
+    if (mr && mr.state !== 'inactive') mr.stop()
+    setRecording(false)
+  }, [])
 
   const startRecording = async () => {
     setMicError(null)
@@ -123,7 +147,7 @@ export default function Converse() {
       mr.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop())
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
-        if (blob.size === 0) return
+        if (blob.size === 0 || unmountedRef.current) return
         setTranscribing(true)
         try {
           const { text } = await api.transcribe(blob, 'audio.webm')
@@ -135,24 +159,37 @@ export default function Converse() {
         }
         setTranscribing(false)
       }
+      // The OS can pull the mic out from under us (a phone call, another app
+      // claiming it); stop cleanly so the UI doesn't sit in "Recording…".
+      stream.getAudioTracks().forEach((t) => t.addEventListener('ended', stopRecording))
       mr.start()
       mediaRecorderRef.current = mr
       setRecording(true)
-      recordTimeoutRef.current = setTimeout(() => stopRecording(), MAX_RECORD_MS)
+      recordTimeoutRef.current = setTimeout(stopRecording, MAX_RECORD_MS)
     } catch (err) {
       setMicError(err.message || 'Microphone unavailable')
     }
   }
 
-  const stopRecording = () => {
-    if (recordTimeoutRef.current) {
-      clearTimeout(recordTimeoutRef.current)
-      recordTimeoutRef.current = null
+  // Switching away mid-recording: stop and transcribe what was captured.
+  // Mobile browsers suspend a hidden page's mic anyway, so carrying on would
+  // only produce a truncated clip with the UI still claiming to record.
+  useEffect(() => {
+    if (!recording) return
+    const onVisibilityChange = () => { if (document.hidden) stopRecording() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [recording, stopRecording])
+
+  // Leaving the page mid-recording must release the microphone; otherwise
+  // the stream (and the browser's recording indicator) stays live.
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+      stopRecording()
     }
-    const mr = mediaRecorderRef.current
-    if (mr && mr.state !== 'inactive') mr.stop()
-    setRecording(false)
-  }
+  }, [stopRecording])
 
   if (!question) {
     return (
@@ -191,10 +228,10 @@ export default function Converse() {
           <LevelBadge />
           <button
             onClick={startConversation}
-            disabled={starting}
-            className="text-xs text-gray-400 hover:text-gray-200 inline-flex items-center gap-1"
+            disabled={starting || submitting}
+            className="text-xs text-gray-400 hover:text-gray-200 disabled:opacity-50 inline-flex items-center gap-1"
           >
-            <RefreshCw size={12} /> New topic
+            <RefreshCw size={12} className={starting ? 'animate-spin' : ''} /> New topic
           </button>
         </div>
       </div>
@@ -298,6 +335,7 @@ export default function Converse() {
             </div>
           </div>
 
+          {error && <div className="text-sm text-red-400">{error}</div>}
           <button
             onClick={continueConversation}
             className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-medium px-4 py-3 rounded-lg"

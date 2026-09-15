@@ -11,11 +11,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from .database import Base, engine
 from .routers import converse, furigana, generate, ingest, items, settings, study, transcribe
 from .routers.transcribe import whisper_enabled
+from .spa import SPAStaticFiles
 from .sqlite_migrate import ensure_columns
 from .translation import prewarm as prewarm_translation
 
@@ -69,4 +69,4 @@ def features():
 # Serve frontend static files in production
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "frontend", "dist")
 if os.path.isdir(frontend_dist):
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+    app.mount("/", SPAStaticFiles(directory=frontend_dist, html=True), name="frontend")

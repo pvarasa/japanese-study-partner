@@ -354,6 +354,8 @@ cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 cd frontend && npm run dev -- --host 0.0.0.0
 ```
 
+If you use the dev server day to day from a phone, consider `DISABLE_HMR=1`. Backgrounding the tab drops Vite's HMR socket, and Vite answers the reconnect with a full page reload. That reload throws away any request still in flight, such as an AI extraction or a generated question. The flag turns the socket off, at the cost of hot updates, so you refresh by hand after code changes. Screen state survives the reload either way (see *Surviving reloads* below).
+
 ### Testing
 ```bash
 cd backend && uv sync --group dev     # installs pytest once
@@ -366,7 +368,7 @@ Covers the SRS algorithm, the shared LLM JSON-response parser, and TestClient sm
 cd frontend && npm run build && cd ..
 cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
-The backend serves the built frontend from `frontend/dist/` automatically.
+The backend serves the built frontend from `frontend/dist/` automatically. Unknown non-API, extension-less paths fall back to `index.html` (`app/spa.py`), so reloading on `/study` or `/items?type=word` works.
 
 ### Docker (with PostgreSQL)
 ```bash
@@ -435,7 +437,8 @@ Select mode -> `POST /study/session/start` -> `GET /study/due` (up to 20 unsuspe
 - **Session progress recorded per review**: writing counters only at session end meant an abandoned session logged nothing, which silently erased whole modes from the stats and broke the streak
 - **Dark mode only**: personal preference, easier on the eyes for study sessions
 - **Local Whisper over cloud STT**: avoids per-minute API costs, keeps audio on-device, runs fast on the 3080. Kotoba-Whisper over vanilla large-v3 because it's Japanese-fine-tuned with better CER at lower latency
-- **JLPT level stored server-side**: the app is used from multiple devices over Tailscale, so the DB is the source of truth; `localStorage` is only a cache for first-paint
+- **JLPT level stored server-side**: the app is used from multiple devices over Tailscale, so the DB is the source of truth; `localStorage` is only a cache for first-paint. It's re-read when the tab regains visibility, so a change made on another device shows up
+- **Surviving reloads**: on a phone, switching apps often costs the page its memory. The browser discards the backgrounded tab, or the dev server reloads it, so work held only in React state is lost. In-progress work is therefore persisted to `localStorage` through `storage.js`, which wraps values in a timestamped envelope so they can expire. That covers the study session (down to the typed answer), the conversation, the unsaved import result, and the reading passage. The Library keeps its filters in the URL. Study and conversation snapshots expire after 6 hours, because resuming yesterday's due queue would be wrong. Import drafts expire after 24 hours
 
 ## Screenshots
 

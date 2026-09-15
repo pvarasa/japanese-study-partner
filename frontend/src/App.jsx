@@ -1,7 +1,9 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
 import { BookOpen, Brain, BarChart3, Upload, Menu, X, FileText, Minus, Plus, MessagesSquare } from 'lucide-react'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import ErrorBoundary from './components/ErrorBoundary'
+import { usePersistentState } from './hooks/usePersistentState'
+import { useOnPageVisible } from './hooks/useOnPageVisible'
 import Dashboard from './pages/Dashboard'
 import Items from './pages/Items'
 import Study from './pages/Study'
@@ -31,42 +33,46 @@ const JP_SIZES = [
 function App() {
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
-  const [sizeIdx, setSizeIdx] = useState(() => {
-    const saved = localStorage.getItem('jp-size')
-    return saved !== null ? Number(saved) : 1
-  })
-  const [jlptLevel, setJlptLevelState] = useState(() => {
-    return localStorage.getItem('jlpt-level') || 'N3'
-  })
+  const [storedSizeIdx, setSizeIdx] = usePersistentState('jp-size', 1)
+  // Clamped: a stale or hand-edited value must not index past JP_SIZES.
+  const sizeIdx = JP_SIZES[storedSizeIdx] ? storedSizeIdx : 1
+  // Cached for an instant first paint; the server copy wins once it loads.
+  const [storedLevel, setJlptLevelState] = usePersistentState('jlpt-level', 'N3')
+  const jlptLevel = JLPT_LEVELS.includes(storedLevel) ? storedLevel : 'N3'
   const [features, setFeatures] = useState({ whisperEnabled: true })
 
   useEffect(() => {
     const s = JP_SIZES[sizeIdx]
     document.documentElement.style.setProperty('--jp-scale', s.jp)
     document.documentElement.style.setProperty('--rt-scale', s.rt)
-    localStorage.setItem('jp-size', sizeIdx)
   }, [sizeIdx])
+
+  const syncSettings = useCallback((isCancelled = () => false) => {
+    api.getSettings().then((s) => {
+      if (isCancelled()) return
+      if (s?.jlpt_level && JLPT_LEVELS.includes(s.jlpt_level)) {
+        setJlptLevelState(s.jlpt_level)
+      }
+    }).catch(() => {})
+  }, [setJlptLevelState])
 
   useEffect(() => {
     let cancelled = false
-    api.getSettings().then((s) => {
-      if (cancelled) return
-      if (s?.jlpt_level && JLPT_LEVELS.includes(s.jlpt_level)) {
-        setJlptLevelState(s.jlpt_level)
-        localStorage.setItem('jlpt-level', s.jlpt_level)
-      }
-    }).catch(() => {})
+    syncSettings(() => cancelled)
     api.getFeatures().then((f) => {
       if (cancelled) return
       setFeatures({ whisperEnabled: f.whisper_enabled })
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [])
+  }, [syncSettings])
+
+  // The level is shared across devices; pick up a change made on another one
+  // when the learner comes back to this tab.
+  useOnPageVisible(() => syncSettings())
 
   const setJlptLevel = (level) => {
     if (!JLPT_LEVELS.includes(level) || level === jlptLevel) return
     setJlptLevelState(level)
-    localStorage.setItem('jlpt-level', level)
     api.updateSettings({ jlpt_level: level }).catch(() => {})
   }
 

@@ -8,7 +8,19 @@ async function request(path, { body, headers, ...rest } = {}) {
   };
   if (body !== undefined) init.body = isForm ? body : JSON.stringify(body);
 
-  const res = await fetch(`${API}${path}`, init);
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, init);
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    // fetch rejects only when no response arrived at all — offline, server
+    // down, or (commonly on phones) the request was cut off while the app was
+    // in the background. The browser's wording for that ("Failed to fetch",
+    // "Load failed") means nothing to the learner.
+    const netErr = new Error('Network error — check your connection and try again.');
+    netErr.cause = err;
+    throw netErr;
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     const err = new Error(body.detail || 'Request failed');

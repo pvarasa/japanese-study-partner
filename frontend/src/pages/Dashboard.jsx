@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Brain, BookOpen, Target, Flame, AlertTriangle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
 import { pct } from '../format'
+import { useOnPageVisible } from '../hooks/useOnPageVisible'
 import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
 import RetentionChart from '../components/RetentionChart'
@@ -42,11 +43,28 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [restoring, setRestoring] = useState(null)
 
-  useEffect(() => {
-    api.getDashboard().then(setStats).catch(console.error).finally(() => setLoading(false))
+  // Background refreshes keep what's on screen if they fail; only the first
+  // load can land on the "Could not load" state.
+  const load = useCallback((isCancelled = () => false) => {
+    api.getDashboard()
+      .then((s) => { if (!isCancelled()) setStats(s) })
+      .catch(console.error)
+      .finally(() => { if (!isCancelled()) setLoading(false) })
     // The trend is supplementary — a failure here shouldn't blank the page.
-    api.getHistory(60).then(setHistory).catch(console.error)
+    api.getHistory(60)
+      .then((h) => { if (!isCancelled()) setHistory(h) })
+      .catch(console.error)
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    load(() => cancelled)
+    return () => { cancelled = true }
+  }, [load])
+
+  // Due counts and today's totals drift while the app sits in the background
+  // (cards come due, reviews happen on another device), so refresh on return.
+  useOnPageVisible(() => load())
 
   // Unsuspending resets the card's history, so refresh the whole dashboard
   // rather than trying to patch the counts locally.

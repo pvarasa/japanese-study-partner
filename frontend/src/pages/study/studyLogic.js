@@ -15,10 +15,11 @@ export const MODES = [
 // example sentences, so it costs no AI call and returns instantly.
 export const GENERATED_MODES = ['cloze', 'fill_blank', 'sentence_build', 'grammar_drill']
 
-// Fallback when the generate request fails without a server-provided detail.
+// Fallbacks for when a request fails without a server-provided detail.
+export const START_ERROR = 'Failed to start the session. Please try again.'
 export const QUESTION_ERROR = 'Failed to load this question. Please try again.'
-// Fallback when submitting a review rating fails.
 export const RATE_ERROR = 'Failed to save your review. Please try again.'
+export const EVALUATE_ERROR = 'Could not evaluate your answer. Please try again.'
 
 // The placeholder the server blanks the target word out with. Must match
 // BLANK in backend/app/cloze.py — it's what turns a cloze prompt back into a

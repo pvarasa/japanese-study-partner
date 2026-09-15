@@ -16,10 +16,11 @@ export default function Reading() {
   const [passage, setPassage] = usePersistentState('reading-passage', null)
   const [savedWords, setSavedWords] = usePersistentState('reading-saved-words', [])
   const [loading, setLoading] = useState(false)
-  const [showTranslation, setShowTranslation] = useState(false)
-  const [showWordMeanings, setShowWordMeanings] = useState(false)
+  const [showTranslation, setShowTranslation] = usePersistentState('reading-show-translation', false)
+  const [showWordMeanings, setShowWordMeanings] = usePersistentState('reading-show-words', false)
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(null)
+  const [saveError, setSaveError] = useState(null)
 
   const generate = async () => {
     setLoading(true)
@@ -28,6 +29,7 @@ export default function Reading() {
     setShowTranslation(false)
     setShowWordMeanings(false)
     setSavedWords([])
+    setSaveError(null)
     try {
       const res = await api.generateReading(prompt || null)
       setPassage(res)
@@ -39,6 +41,7 @@ export default function Reading() {
 
   const saveWord = async (word) => {
     setSaving(word.japanese)
+    setSaveError(null)
     try {
       // enrich: the server fills in usage notes + example sentences, so words
       // saved here match imported ones. Adds ~1-2s, covered by the row spinner.
@@ -51,9 +54,10 @@ export default function Reading() {
         tags: ['from-reading'],
       }, { enrich: true })
       setSavedWords(prev => prev.includes(word.japanese) ? prev : [...prev, word.japanese])
-    } catch {
-      // ignore duplicates
-      setSavedWords(prev => prev.includes(word.japanese) ? prev : [...prev, word.japanese])
+    } catch (err) {
+      // The server doesn't reject duplicates, so any failure here is real
+      // (often a request cut off by switching apps) — don't tick it as saved.
+      setSaveError(`Couldn't add ${word.japanese}: ${err.message || 'request failed'}`)
     }
     setSaving(null)
   }
@@ -166,6 +170,9 @@ export default function Reading() {
               {newWords.length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-indigo-400 uppercase tracking-wider mb-2">New words</div>
+                  {saveError && (
+                    <div className="mb-2 text-sm text-red-400 bg-red-500/15 p-2 rounded-lg">{saveError}</div>
+                  )}
                   <div className="bg-gray-900 rounded-xl border border-indigo-500/20 divide-y divide-gray-800">
                     {newWords.map((w, i) => (
                       <div key={i} className="px-4 py-2 flex justify-between items-center">
