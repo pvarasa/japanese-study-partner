@@ -121,5 +121,8 @@ async def lookup_word(req: LookupRequest):
         meaning=(data.get("meaning") or "").strip(),
         reading=reading,
     )
-    _lookup_cache[key] = resp
+    # An empty meaning is an unparseable reply, not an answer — caching it would
+    # pin "No meaning found" on the word until the server restarts.
+    if resp.meaning:
+        _lookup_cache[key] = resp
     return resp

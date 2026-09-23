@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, Trash2, Edit3, ChevronDown, PauseCircle, RotateCcw } from 'lucide-react'
 import { api } from '../api'
@@ -7,6 +7,8 @@ import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
 import { SkeletonLine } from '../components/Skeleton'
 
+// Fetched a page at a time; "Load more" appends the next page.
+const PAGE_SIZE = 200
 const TYPES = ['all', 'word', 'grammar', 'expression']
 const LEVELS = ['all', 'N1', 'N2', 'N3', 'N4', 'N5']
 // Buckets use the lenient pass rate ("hard" counts, only "again" is a miss),
@@ -36,8 +38,11 @@ export default function Items() {
   const query = searchParams.get('q') || ''
 
   const [items, setItems] = useState([])
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [search, setSearch] = useState(query)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({})
@@ -54,25 +59,56 @@ export default function Items() {
   // Keep the box in step when the URL changes underneath it (back/forward).
   useEffect(() => { setSearch(query) }, [query])
 
+  const params = useMemo(() => {
+    const p = { limit: PAGE_SIZE }
+    if (typeFilter !== 'all') p.type = typeFilter
+    if (levelFilter !== 'all') p.jlpt_level = levelFilter
+    if (accuracyFilter !== 'all') p.accuracy = accuracyFilter
+    if (statusFilter !== 'all') p.suspended = statusFilter === 'suspended'
+    if (query) p.search = query
+    return p
+  }, [typeFilter, levelFilter, accuracyFilter, statusFilter, query])
+
   useEffect(() => {
-    const params = {}
-    if (typeFilter !== 'all') params.type = typeFilter
-    if (levelFilter !== 'all') params.jlpt_level = levelFilter
-    if (accuracyFilter !== 'all') params.accuracy = accuracyFilter
-    if (statusFilter !== 'all') params.suspended = statusFilter === 'suspended'
-    if (query) params.search = query
     let cancelled = false
     setLoading(true)
+    setError(null)
     api.getItems(params)
-      .then((res) => { if (!cancelled) setItems(res) })
-      .catch(console.error)
+      .then((res) => {
+        if (cancelled) return
+        setItems(res)
+        setHasMore(res.length === PAGE_SIZE)
+      })
+      .catch((err) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     // A slower response for filters the user has already moved past must not
     // overwrite the current list.
     return () => { cancelled = true }
-  }, [typeFilter, levelFilter, accuracyFilter, statusFilter, query, reloadKey])
+  }, [params, reloadKey])
 
   const load = () => setReloadKey(k => k + 1)
+
+  const loadMore = async () => {
+    setLoadingMore(true)
+    try {
+      const res = await api.getItems({ ...params, offset: items.length })
+      setItems(prev => [...prev, ...res])
+      setHasMore(res.length === PAGE_SIZE)
+    } catch (err) {
+      setError(err.message)
+    }
+    setLoadingMore(false)
+  }
+
+  // Row actions report failures instead of silently leaving the row as it was.
+  const attempt = async (action) => {
+    setError(null)
+    try {
+      await action()
+    } catch (err) {
+      setError(err.message || 'Something went wrong')
+    }
+  }
 
   const handleSearch = (e) => {
     e.preventDefault()
@@ -80,10 +116,12 @@ export default function Items() {
     else setFilter('q', search.trim())
   }
 
-  const handleDelete = async (id) => {
+  const handleDelete = (id) => {
     if (!confirm('Delete this item?')) return
-    await api.deleteItem(id)
-    setItems(items.filter(i => i.id !== id))
+    return attempt(async () => {
+      await api.deleteItem(id)
+      setItems(prev => prev.filter(i => i.id !== id))
+    })
   }
 
   const startEdit = (item) => {
@@ -91,20 +129,21 @@ export default function Items() {
     setEditForm({ japanese: item.japanese, reading: item.reading || '', meaning: item.meaning, notes: item.notes || '' })
   }
 
-  const saveEdit = async (id) => {
-    await api.updateItem(id, editForm)
-    setEditingId(null)
-    load()
-  }
+  // Patch the row from the server's copy, which also carries any fields the
+  // action reset (unsuspending clears the SRS history).
+  const replaceItem = (updated) =>
+    setItems(prev => prev.map(i => (i.id === updated.id ? updated : i)))
 
-  // Unsuspending resets the card's SRS history (the card was presumably
-  // reworked), so reload rather than patching the row locally.
-  const toggleSuspend = async (item) => {
-    const updated = item.suspended
+  const saveEdit = (id) => attempt(async () => {
+    replaceItem(await api.updateItem(id, editForm))
+    setEditingId(null)
+  })
+
+  const toggleSuspend = (item) => attempt(async () => {
+    replaceItem(item.suspended
       ? await api.unsuspendItem(item.id)
-      : await api.suspendItem(item.id)
-    setItems(items.map(i => (i.id === item.id ? { ...i, ...updated } : i)))
-  }
+      : await api.suspendItem(item.id))
+  })
 
   return (
     <div className="space-y-4">
@@ -142,6 +181,8 @@ export default function Items() {
           ))}
         </div>
       </div>
+
+      {error && <div className="text-sm text-red-400 bg-red-500/15 p-3 rounded-lg">{error}</div>}
 
       {/* Items list */}
       {loading ? (
@@ -222,6 +263,16 @@ export default function Items() {
             </div>
           ))}
         </div>
+      )}
+
+      {!loading && hasMore && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="w-full border border-gray-700 text-gray-300 py-2 rounded-lg hover:bg-gray-800 text-sm disabled:opacity-50"
+        >
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
       )}
     </div>
   )

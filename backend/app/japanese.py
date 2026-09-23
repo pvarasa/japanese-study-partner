@@ -5,18 +5,16 @@ both need the fugashi tagger, and a shared helper has no business depending on
 a *router* — same reasoning as ``levels.py``.
 """
 import html
+import threading
 import unicodedata
 
 import fugashi
 
 _tagger = None
-
-
-def _get_tagger():
-    global _tagger
-    if _tagger is None:
-        _tagger = fugashi.Tagger()
-    return _tagger
+# One MeCab tagger is shared by every threadpool worker, and MeCab's node
+# parsing isn't documented as thread-safe — so parses are serialised, and each
+# token's fields are copied out before the lock is released.
+_tagger_lock = threading.Lock()
 
 
 def kata_to_hira(text: str) -> str:
@@ -34,26 +32,52 @@ def has_kanji(text: str) -> bool:
     return any("CJK" in unicodedata.name(c, "") for c in text)
 
 
+def tokenize(text: str) -> list[dict]:
+    """Segment text into tokens with surface, reading, lemma, and the
+    whitespace that preceded each token.
+
+    ``reading`` is hiragana, and only set for kanji-bearing tokens whose
+    reading differs from the surface — i.e. exactly where furigana belongs.
+    """
+    global _tagger
+    with _tagger_lock:
+        if _tagger is None:
+            _tagger = fugashi.Tagger()
+        # MeCab drops inter-token whitespace from the surface; white_space holds
+        # the run that preceded the token, so annotate() can re-emit it.
+        words = [
+            (w.surface, w.feature.kana, w.feature.lemma, getattr(w, "white_space", "") or "")
+            for w in _tagger(text)
+        ]
+
+    tokens = []
+    for surface, kana, lemma, white_space in words:
+        reading = ""
+        if kana and has_kanji(surface):
+            hira = kata_to_hira(kana)
+            if hira != surface:
+                reading = hira
+        tokens.append({
+            "surface": surface,
+            "reading": reading,
+            "lemma": lemma or surface,
+            "white_space": white_space,
+        })
+    return tokens
+
+
 def annotate(text: str) -> str:
     """Convert Japanese text to HTML with <ruby> tags for kanji."""
-    tagger = _get_tagger()
-    words = tagger(text)
     parts = []
-    for w in words:
-        # MeCab drops inter-token whitespace from the surface; w.white_space
-        # holds the run that preceded this token, so re-emit it to keep
-        # English/mixed prompts (e.g. sentence-build questions) readable.
-        parts.append(getattr(w, "white_space", "") or "")
-        kana = w.feature.kana
+    for t in tokenize(text):
+        parts.append(t["white_space"])
         # Escape token text before it goes into HTML that the frontend renders
         # via dangerouslySetInnerHTML — ingested pages can contain raw markup.
-        surface = html.escape(w.surface)
-        if kana and has_kanji(w.surface):
-            hira = kata_to_hira(kana)
-            if hira != w.surface:
-                parts.append(f"<ruby>{surface}<rt>{html.escape(hira)}</rt></ruby>")
-                continue
-        parts.append(surface)
+        surface = html.escape(t["surface"])
+        if t["reading"]:
+            parts.append(f"<ruby>{surface}<rt>{html.escape(t['reading'])}</rt></ruby>")
+        else:
+            parts.append(surface)
     return "".join(parts)
 
 
@@ -68,20 +92,3 @@ def reading_for(text: str) -> str:
     parts = [t["reading"] or t["surface"] for t in tokenize(text)]
     out = "".join(parts)
     return out if out and out != text else ""
-
-
-def tokenize(text: str) -> list[dict]:
-    """Segment text into tokens with surface, reading, and lemma."""
-    tagger = _get_tagger()
-    words = tagger(text)
-    tokens = []
-    for w in words:
-        kana = w.feature.kana
-        reading = ""
-        if kana and has_kanji(w.surface):
-            hira = kata_to_hira(kana)
-            if hira != w.surface:
-                reading = hira
-        lemma = w.feature.lemma or w.surface
-        tokens.append({"surface": w.surface, "reading": reading, "lemma": lemma})
-    return tokens

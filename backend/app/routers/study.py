@@ -62,6 +62,10 @@ def _to_local_date(dt: datetime) -> date:
     return dt.astimezone().date()
 
 
+# Items recalled at least this often are "strong" (the Library's top bucket) and
+# don't belong on the dashboard's needs-practice list.
+WEAK_RECALL_BELOW = 0.85
+
 # No real streak runs longer than this, so bounding the window keeps the
 # streak calculation to one query instead of one query per day of the streak.
 STREAK_WINDOW_DAYS = 400
@@ -175,18 +179,24 @@ def get_dashboard(user_id: UserId, db: Db):
     graded_correct = sum(s.items_correct for s in graded)
     accuracy_today = (graded_correct / graded_reviewed * 100) if graded_reviewed > 0 else 0
 
+    recall = Item.srs_correct * 1.0 / func.nullif(Item.srs_reviews, 0)
     weak_items = (
         db.query(Item)
-        .filter(Item.user_id == user_id, Item.srs_reviews >= 2, Item.suspended.is_(False))
-        .order_by((Item.srs_correct * 1.0 / Item.srs_reviews).asc())
+        .filter(
+            Item.user_id == user_id, Item.srs_reviews >= 2, Item.suspended.is_(False),
+            recall < WEAK_RECALL_BELOW,
+        )
+        .order_by(recall.asc())
         .limit(10)
         .all()
     )
 
-    # Suspended cards, worst first — the rework queue.
+    # Suspended cards, worst first — the rework queue. The list is capped, so
+    # the total is counted separately.
+    suspended = db.query(Item).filter(Item.user_id == user_id, Item.suspended.is_(True))
+    suspended_count = suspended.with_entities(func.count(Item.id)).scalar()
     leeches = (
-        db.query(Item)
-        .filter(Item.user_id == user_id, Item.suspended.is_(True))
+        suspended
         .order_by(
             ((Item.srs_correct + Item.srs_hard) * 1.0 / func.nullif(Item.srs_reviews, 0)).asc(),
             Item.srs_reviews.desc(),
@@ -222,7 +232,7 @@ def get_dashboard(user_id: UserId, db: Db):
         recent_items=[ItemOut.model_validate(i) for i in recent_items],
         streak_days=streak,
         leeches=[ItemOut.model_validate(i) for i in leeches],
-        suspended_count=len(leeches),
+        suspended_count=suspended_count,
     )
 
 

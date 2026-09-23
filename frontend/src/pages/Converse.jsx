@@ -4,7 +4,7 @@ import { api } from '../api'
 import Ruby from '../components/Ruby'
 import LevelBadge from '../components/LevelBadge'
 import { useFeatures } from '../context/FeaturesContext'
-import { loadValue, saveValue } from '../storage'
+import { usePersistentState } from '../hooks/usePersistentState'
 
 const MAX_RECORD_MS = 30_000
 
@@ -12,19 +12,46 @@ const MAX_RECORD_MS = 30_000
 // browser reloading the tab after an app switch) resumes it mid-thread.
 const CONVERSATION_KEY = 'converse-session'
 const CONVERSATION_MAX_AGE_MS = 6 * 60 * 60 * 1000
+const NO_CONVERSATION = {
+  topic: null,
+  question: null,
+  questionHint: '',
+  history: [],  // {role, content}
+  userText: '',
+  feedback: null,  // ReplyOut
+  // Turn counts aren't tracked here — each turn posts its own increment to
+  // the server as it happens. Conversation still reports corrections-free
+  // turns as "correct", but the dashboard excludes converse from accuracy
+  // entirely, since a conversation has no right answer.
+  //
+  // The session is deliberately *not* ended on unmount: the conversation
+  // resumes when the learner comes back, and a fetch fired from an unmount
+  // path is unreliable anyway. Starting a new topic closes it.
+  sessionId: null,
+}
+
+/** Close a session without counts — each turn already recorded itself. */
+function endSession(id) {
+  if (id == null) return
+  api.endSession(id).catch(() => { /* the turns themselves are already recorded */ })
+}
 
 export default function Converse() {
   const { whisperEnabled } = useFeatures()
-  const [restored] = useState(() => loadValue(CONVERSATION_KEY, null, { maxAgeMs: CONVERSATION_MAX_AGE_MS }))
+  const [convo, setConvo] = usePersistentState(
+    CONVERSATION_KEY, NO_CONVERSATION, { maxAgeMs: CONVERSATION_MAX_AGE_MS }
+  )
+  const { topic, question, questionHint, history, userText, feedback, sessionId } = convo
   const [starting, setStarting] = useState(false)
-  const [topic, setTopic] = useState(restored?.topic ?? null)
-  const [question, setQuestion] = useState(restored?.question ?? null)
-  const [questionHint, setQuestionHint] = useState(restored?.questionHint ?? '')
-  const [history, setHistory] = useState(restored?.history ?? [])  // {role, content}
-  const [userText, setUserText] = useState(restored?.userText ?? '')
   const [submitting, setSubmitting] = useState(false)
-  const [feedback, setFeedback] = useState(restored?.feedback ?? null)  // ReplyOut
   const [error, setError] = useState(null)
+
+  // Accepts a value or an updater, like useState's setter — transcription
+  // appends to whatever the learner has typed meanwhile.
+  const setUserText = useCallback((value) => setConvo(prev => ({
+    ...prev,
+    userText: typeof value === 'function' ? value(prev.userText) : value,
+  })), [setConvo])
 
   // Recording state
   const [recording, setRecording] = useState(false)
@@ -37,46 +64,22 @@ export default function Converse() {
   // transcription into a page that no longer exists.
   const unmountedRef = useRef(false)
 
-  // Turn counts aren't tracked here — each turn posts its own increment to
-  // the server as it happens. Conversation still reports corrections-free
-  // turns as "correct", but the dashboard excludes converse from accuracy
-  // entirely, since a conversation has no right answer.
-  //
-  // The session is deliberately *not* ended on unmount: the conversation
-  // resumes when the learner comes back, and a fetch fired from an unmount
-  // path is unreliable anyway. Starting a new topic closes it.
-  const [sessionId, setSessionId] = useState(restored?.sessionId ?? null)
-
-  useEffect(() => {
-    saveValue(CONVERSATION_KEY, question
-      ? { topic, question, questionHint, history, userText, feedback, sessionId }
-      : null)
-  }, [topic, question, questionHint, history, userText, feedback, sessionId])
-
-  const endSession = () => {
-    if (sessionId == null) return
-    setSessionId(null)
-    // Counts are omitted deliberately: each turn already recorded itself.
-    api.endSession(sessionId).catch(() => { /* the turns themselves are already recorded */ })
-  }
-
   const startConversation = async () => {
     setStarting(true)
     setError(null)
     try {
-      const sess = await api.startSession('converse')
-      endSession()
-      setSessionId(sess.session_id)
-
+      // The topic first: if it fails, the current conversation and its
+      // session stay as they were rather than being swapped for an empty one.
       const s = await api.converseStart()
-      setTopic(s.topic)
-      setQuestion(s.question)
-      setQuestionHint(s.english_hint)
-      // Cleared only once the new topic has arrived, so a failed start
-      // leaves the current conversation on screen.
-      setFeedback(null)
-      setHistory([])
-      setUserText('')
+      const sess = await api.startSession('converse')
+      endSession(sessionId)
+      setConvo({
+        ...NO_CONVERSATION,
+        topic: s.topic,
+        question: s.question,
+        questionHint: s.english_hint,
+        sessionId: sess.session_id,
+      })
     } catch (err) {
       setError(err.message || 'Failed to start')
     }
@@ -93,11 +96,11 @@ export default function Converse() {
         { role: 'tutor', content: question },
       ]
       const res = await api.converseReply(turnHistory, userText)
-      setFeedback(res)
-      setHistory([
-        ...turnHistory,
-        { role: 'learner', content: userText },
-      ])
+      setConvo(prev => ({
+        ...prev,
+        feedback: res,
+        history: [...turnHistory, { role: 'learner', content: userText }],
+      }))
       const clean = res.corrections?.length === 0
       // Record the turn as it happens. This used to be reported only from the
       // unmount cleanup, and an async fetch fired during unmount or tab-close
@@ -119,11 +122,15 @@ export default function Converse() {
     // The follow-up becomes the current question; submitAnswer adds it to the
     // history when it's answered. Appending it here too sent every question
     // after the first to the tutor twice.
-    setQuestion(feedback.follow_up)
-    setQuestionHint(feedback.follow_up_hint)
-    setFeedback(null)
-    setUserText('')
+    setConvo(prev => ({
+      ...prev,
+      question: feedback.follow_up,
+      questionHint: feedback.follow_up_hint,
+      feedback: null,
+      userText: '',
+    }))
   }
+
 
   // Only touches refs and a state setter, so it's stable across renders and
   // safe to hand to the listeners and effects below.

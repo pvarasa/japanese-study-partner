@@ -347,6 +347,26 @@ def test_dashboard_reports_leeches_and_excludes_them_from_due_count(client):
     assert body["weak_items"] == []
 
 
+def test_suspended_count_is_not_capped_by_the_leech_list(client):
+    for i in range(22):
+        item = client.post("/api/items/", json=_make_item(japanese=f"語{i}")).json()
+        client.post(f"/api/items/{item['id']}/suspend")
+    body = client.get("/api/study/dashboard").json()
+    assert len(body["leeches"]) == 20
+    assert body["suspended_count"] == 22
+
+
+def test_weak_items_exclude_strong_recall(client):
+    strong = client.post("/api/items/", json=_make_item(japanese="強")).json()
+    weak = client.post("/api/items/", json=_make_item(japanese="弱")).json()
+    for rating in ("good", "good"):
+        client.post("/api/study/review", json={"item_id": strong["id"], "rating": rating})
+    for rating in ("good", "again"):
+        client.post("/api/study/review", json={"item_id": weak["id"], "rating": rating})
+    ids = [it["id"] for it in client.get("/api/study/dashboard").json()["weak_items"]]
+    assert ids == [weak["id"]]
+
+
 def test_manual_suspend_and_unsuspend_round_trip(client):
     item = client.post("/api/items/", json=_make_item()).json()
     assert client.post(f"/api/items/{item['id']}/suspend").json()["suspended"] is True

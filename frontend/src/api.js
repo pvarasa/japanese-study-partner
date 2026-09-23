@@ -23,7 +23,11 @@ async function request(path, { body, headers, ...rest } = {}) {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
-    const err = new Error(body.detail || 'Request failed');
+    // FastAPI validation errors (422) carry a list of {loc, msg, ...} objects.
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((d) => d.msg).join('; ')
+      : body.detail;
+    const err = new Error(detail || 'Request failed');
     // Callers branch on this — cloze treats a 422 as "skip this item" rather
     // than an error worth interrupting the session for.
     err.status = res.status;

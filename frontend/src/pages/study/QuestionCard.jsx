@@ -4,6 +4,96 @@ import SpeakButton from '../../components/SpeakButton'
 import { Skeleton, SkeletonLine } from '../../components/Skeleton'
 import { CLOZE_BLANK, RATING_COLOR, RATING_LABEL, isAnswerAccepted } from './studyLogic'
 
+const MODE_HEADING = {
+  sentence_build: 'Translate to Japanese',
+  grammar_drill: 'Choose the correct usage',
+  cloze: 'Recall the missing word',
+  fill_blank: 'Fill in the blank',
+}
+
+const VERDICT_STYLE = {
+  correct: { border: 'border-green-500/30', text: 'text-green-400', Icon: CheckCircle, label: 'Correct!' },
+  partial: { border: 'border-yellow-500/30', text: 'text-yellow-400', Icon: AlertCircle, label: 'Almost there' },
+  incorrect: { border: 'border-red-500/30', text: 'text-red-400', Icon: X, label: 'Incorrect' },
+}
+
+/** The AI's verdict on a sentence_build answer, or its loading/error state. */
+function SentenceBuildResult({ evaluating, evaluation, error, retry, userAnswer, question }) {
+  if (evaluating) {
+    return (
+      <div className="border-t border-gray-700 pt-4 flex items-center gap-2 text-gray-500 text-sm">
+        <Loader2 size={15} className="animate-spin" /> Evaluating your answer…
+      </div>
+    )
+  }
+  if (!evaluation) {
+    return error ? (
+      <div className="border-t border-gray-700 pt-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm text-red-300">
+          <AlertCircle size={15} /> {error}
+        </div>
+        <button onClick={retry}
+          className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
+          Try again
+        </button>
+      </div>
+    ) : null
+  }
+  const { verdict, feedback, corrected } = evaluation
+  const style = VERDICT_STYLE[verdict] || VERDICT_STYLE.incorrect
+  return (
+    <div className={`border-t pt-4 space-y-2 ${style.border}`}>
+      <div className={`flex items-center gap-2 font-medium ${style.text}`}>
+        <style.Icon size={18} /> {style.label}
+      </div>
+      <div className="text-sm">
+        <span className="text-gray-500">Your answer: </span>
+        <Ruby text={userAnswer} className="text-gray-200" />
+      </div>
+      {feedback && <div className="text-sm text-gray-400">{feedback}</div>}
+      {corrected && (
+        <div className="text-sm">
+          <span className="text-gray-500">Corrected: </span>
+          <Ruby text={corrected} className="text-gray-200" />
+        </div>
+      )}
+      <div className="text-sm text-gray-500">Reference answer:</div>
+      <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
+    </div>
+  )
+}
+
+/** Right/wrong result for the exact-match modes (cloze, fill_blank, grammar_drill). */
+function AnswerResult({ mode, question, userAnswer }) {
+  const isCorrect = isAnswerAccepted(userAnswer, question)
+  const style = VERDICT_STYLE[isCorrect ? 'correct' : 'incorrect']
+  // For cloze the sentence with the blank filled back in is the thing worth
+  // reading aloud, not the bare word.
+  const spoken = mode === 'cloze'
+    ? question.prompt.replace(CLOZE_BLANK, question.answer)
+    : question.answer
+  return (
+    <div className={`border-t pt-4 space-y-2 ${style.border}`}>
+      <div className={`flex items-center gap-2 font-medium ${style.text}`}>
+        <style.Icon size={18} /> {style.label}
+      </div>
+      {!isCorrect && userAnswer && (
+        <div className="text-sm text-red-300/70">
+          Your answer: <Ruby text={userAnswer} />
+        </div>
+      )}
+      <div className="text-sm text-gray-500">Correct answer:</div>
+      <div className="flex items-center gap-1">
+        <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
+        <SpeakButton text={spoken} label="Read the sentence aloud" />
+      </div>
+      {mode === 'cloze' && question.translation && (
+        <div className="text-sm text-gray-500">{question.translation}</div>
+      )}
+    </div>
+  )
+}
+
 export default function QuestionCard({
   mode, question, userAnswer, setUserAnswer, answerChecked, checkAnswer,
   evaluating, evaluation, hintsRevealed, setHintsRevealed,
@@ -50,13 +140,7 @@ export default function QuestionCard({
       {question ? (
         <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-4">
           <div className="text-sm text-gray-500 uppercase font-medium">
-            {mode === 'sentence_build'
-              ? 'Translate to Japanese'
-              : mode === 'grammar_drill'
-                ? 'Choose the correct usage'
-                : mode === 'cloze'
-                  ? 'Recall the missing word'
-                  : 'Fill in the blank'}
+            {MODE_HEADING[mode]}
           </div>
 
           {mode === 'sentence_build' ? (
@@ -147,96 +231,15 @@ export default function QuestionCard({
             </div>
           )}
 
-          {answerChecked && mode === 'sentence_build' && (
-            evaluating ? (
-              <div className="border-t border-gray-700 pt-4 flex items-center gap-2 text-gray-500 text-sm">
-                <Loader2 size={15} className="animate-spin" /> Evaluating your answer…
-              </div>
-            ) : !evaluation ? (
-              error && (
-                <div className="border-t border-gray-700 pt-4 space-y-3">
-                  <div className="flex items-center gap-2 text-sm text-red-300">
-                    <AlertCircle size={15} /> {error}
-                  </div>
-                  <button onClick={retry}
-                    className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
-                    Try again
-                  </button>
-                </div>
-              )
-            ) : (() => {
-              const { verdict, feedback, corrected } = evaluation
-              const isCorrect = verdict === 'correct'
-              const isPartial = verdict === 'partial'
-              return (
-                <div className={`border-t pt-4 space-y-2 ${isCorrect ? 'border-green-500/30' : isPartial ? 'border-yellow-500/30' : 'border-red-500/30'}`}>
-                  {isCorrect ? (
-                    <div className="flex items-center gap-2 text-green-400 font-medium">
-                      <CheckCircle size={18} /> Correct!
-                    </div>
-                  ) : isPartial ? (
-                    <div className="flex items-center gap-2 text-yellow-400 font-medium">
-                      <AlertCircle size={18} /> Almost there
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-red-400 font-medium">
-                      <X size={18} /> Incorrect
-                    </div>
-                  )}
-                  <div className="text-sm">
-                    <span className="text-gray-500">Your answer: </span>
-                    <Ruby text={userAnswer} className="text-gray-200" />
-                  </div>
-                  {feedback && <div className="text-sm text-gray-400">{feedback}</div>}
-                  {corrected && (
-                    <div className="text-sm">
-                      <span className="text-gray-500">Corrected: </span>
-                      <Ruby text={corrected} className="text-gray-200" />
-                    </div>
-                  )}
-                  <div className="text-sm text-gray-500">Reference answer:</div>
-                  <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
-                </div>
-              )
-            })()
-          )}
-
-          {answerChecked && mode !== 'sentence_build' && (() => {
-            const isCorrect = isAnswerAccepted(userAnswer, question)
-            // For cloze the sentence with the blank filled back in is the thing
-            // worth reading aloud, not the bare word.
-            const spoken = mode === 'cloze'
-              ? question.prompt.replace(CLOZE_BLANK, question.answer)
-              : question.answer
-            return (
-              <div className={`border-t pt-4 space-y-2 ${isCorrect ? 'border-green-500/30' : 'border-red-500/30'}`}>
-                {isCorrect ? (
-                  <div className="flex items-center gap-2 text-green-400 font-medium">
-                    <CheckCircle size={18} /> Correct!
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 text-red-400 font-medium">
-                      <X size={18} /> Incorrect
-                    </div>
-                    {userAnswer && (
-                      <div className="text-sm text-red-300/70">
-                        Your answer: <Ruby text={userAnswer} />
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="text-sm text-gray-500">Correct answer:</div>
-                <div className="flex items-center gap-1">
-                  <Ruby text={question.answer} className="text-lg font-medium text-gray-100" />
-                  <SpeakButton text={spoken} label="Read the sentence aloud" />
-                </div>
-                {mode === 'cloze' && question.translation && (
-                  <div className="text-sm text-gray-500">{question.translation}</div>
-                )}
-              </div>
+          {answerChecked && (mode === 'sentence_build'
+            ? (
+              <SentenceBuildResult
+                evaluating={evaluating} evaluation={evaluation} error={error} retry={retry}
+                userAnswer={userAnswer} question={question}
+              />
             )
-          })()}
+            : <AnswerResult mode={mode} question={question} userAnswer={userAnswer} />
+          )}
         </div>
       ) : error ? (
         <div className="bg-gray-900 rounded-2xl border border-red-500/30 p-6 space-y-3 text-center">

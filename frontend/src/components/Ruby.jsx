@@ -39,9 +39,14 @@ export default function Ruby({ text, className = '' }) {
   useEffect(() => {
     if (!text) return
     setHtml(null)
+    // A request for the previous text can land after this one (e.g. the new
+    // text was already cached and answered synchronously), so a stale result
+    // must not overwrite it.
+    let cancelled = false
     requestFurigana(text, (result) => {
-      if (result !== null) setHtml(result)
+      if (!cancelled && result !== null) setHtml(result)
     })
+    return () => { cancelled = true }
   }, [text])
 
   if (!text) return null

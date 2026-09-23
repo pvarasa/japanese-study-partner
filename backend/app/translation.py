@@ -10,7 +10,7 @@ import httpx
 from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
 
-from .llm import DEFAULT_MODEL, call_claude, get_anthropic_client, parse_json_response
+from .llm import DEFAULT_MODEL, complete_json, parse_json_response
 
 log = logging.getLogger("app.translation")
 
@@ -26,10 +26,16 @@ def get_provider() -> str:
     return os.environ.get("TRANSLATION_PROVIDER", "anthropic").strip().lower() or "anthropic"
 
 
+def _ollama_config() -> tuple[str, str]:
+    """(base URL, model) for the Ollama provider."""
+    base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).rstrip("/")
+    return base, os.environ.get("OLLAMA_TRANSLATION_MODEL", DEFAULT_OLLAMA_MODEL)
+
+
 def get_model() -> str:
     """Identifier for the active model — used as a cache-key component."""
     if get_provider() == "ollama":
-        return os.environ.get("OLLAMA_TRANSLATION_MODEL", DEFAULT_OLLAMA_MODEL)
+        return _ollama_config()[1]
     return DEFAULT_MODEL
 
 
@@ -71,22 +77,14 @@ async def translate_lookup(
 
 
 def _translate_anthropic(prompt: str) -> dict:
-    client = get_anthropic_client()
-    message = call_claude(
-        client,
-        model=DEFAULT_MODEL,
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}],
-    )
     try:
-        return parse_json_response(message.content[0].text)
-    except Exception:
+        return complete_json(prompt, max_tokens=200)
+    except ValueError:  # JSONDecodeError — the reply wasn't JSON
         return {}
 
 
 async def _translate_ollama(prompt: str) -> dict:
-    base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).rstrip("/")
-    model = os.environ.get("OLLAMA_TRANSLATION_MODEL", DEFAULT_OLLAMA_MODEL)
+    base, model = _ollama_config()
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -140,8 +138,7 @@ async def prewarm() -> None:
     """
     if get_provider() != "ollama":
         return
-    base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).rstrip("/")
-    model = os.environ.get("OLLAMA_TRANSLATION_MODEL", DEFAULT_OLLAMA_MODEL)
+    base, model = _ollama_config()
     log.info("Prewarming Ollama model %s at %s", model, base)
     # Empty prompt with keep_alive=-1 just resident-loads the model; it returns
     # quickly once weights are in VRAM. Ollama supports this idiom on /api/generate.

@@ -1,8 +1,9 @@
 import random
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Form, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 
 from ..cloze import build_cloze
 from ..crud import format_library_lines
@@ -42,8 +43,26 @@ Return JSON with:
 Return ONLY valid JSON."""
 
 
+QuestionMode = Literal["cloze", "fill_blank", "sentence_build", "grammar_drill"]
+
+
+def _checked_options(options: list, answer: str) -> list[str]:
+    """Shuffle the choices, rejecting a set the learner couldn't answer.
+
+    Grading is an exact match against ``answer``, so a reply whose answer isn't
+    literally one of the options would mark every choice wrong and schedule a
+    lapse. Raising here lets ``ai_response`` turn it into a retryable 502. The
+    shuffle stops the model's habit of always putting the answer in one slot.
+    """
+    options = [str(o) for o in options]
+    if options and answer not in options:
+        raise ValueError(f"answer {answer!r} is not among the options {options!r}")
+    random.shuffle(options)
+    return options
+
+
 @router.post("/question", response_model=StudyQuestion)
-def generate_question(item: OwnedItem, mode: str, user_id: UserId, db: Db):
+def generate_question(item: OwnedItem, mode: QuestionMode, user_id: UserId, db: Db):
     # Cloze is built from the item's stored example sentences, so it costs no
     # AI call and returns instantly. Handled before the Claude path rather than
     # as its own endpoint so the frontend keeps a single question-fetch flow.
@@ -82,7 +101,7 @@ def generate_question(item: OwnedItem, mode: str, user_id: UserId, db: Db):
             item_id=item.id,
             prompt=data["prompt"],
             answer=data["answer"],
-            options=data.get("options", []),
+            options=_checked_options(data.get("options") or [], data["answer"]),
             context=data.get("context"),
             translation=data.get("translation"),
             vocabulary=vocabulary,
@@ -159,12 +178,13 @@ Return ONLY valid JSON, no markdown fences."""
 
 @router.post("/reading", response_model=ReadingPassage)
 def generate_reading(user_id: UserId, db: Db, prompt: Optional[str] = Form(None)):
-    items = db.query(Item).filter(Item.user_id == user_id).all()
-    if not items:
+    # Random subset for variety, sampled in SQL rather than loading every row.
+    sample = (
+        db.query(Item).filter(Item.user_id == user_id)
+        .order_by(func.random()).limit(15).all()
+    )
+    if not sample:
         raise HTTPException(400, "No items in library yet")
-
-    # Pick a random subset to encourage variety
-    sample = random.sample(items, min(len(items), 15))
     library_words = format_library_lines(sample)
 
     topic_instruction = ""
@@ -187,8 +207,10 @@ def generate_reading(user_id: UserId, db: Db, prompt: Optional[str] = Form(None)
             max_tokens=3072,
         )
 
-        # Build lookup of library items for matching
-        library_set = {it.japanese for it in items}
+        # The passage may use any library word, not just the sampled ones.
+        library_set = {
+            j for (j,) in db.query(Item.japanese).filter(Item.user_id == user_id)
+        }
 
         words = []
         for w in data.get("words", []):

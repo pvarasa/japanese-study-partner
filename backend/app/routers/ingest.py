@@ -101,7 +101,11 @@ async def _fetch_url(url: str) -> str:
         raise HTTPException(400, "Couldn't fetch that URL.") from e
 
     from bs4 import BeautifulSoup
-    soup = BeautifulSoup(resp.text, "html.parser")
+    # Raw bytes, not resp.text: with no charset in the Content-Type header httpx
+    # decodes as UTF-8, garbling the many Japanese sites that declare Shift_JIS
+    # or EUC-JP only in a <meta> tag. The header still wins when it has one;
+    # otherwise BeautifulSoup sniffs the <meta> declaration itself.
+    soup = BeautifulSoup(resp.content, "html.parser", from_encoding=resp.charset_encoding)
     # Remove scripts and styles
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
