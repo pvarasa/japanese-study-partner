@@ -7,8 +7,8 @@ the word uses. Seeing 決断 (けつだん) next to 断る (ことわる) teache
 on/kun split from words the learner already knows. The per-kanji facts
 themselves (readings, mnemonic, origin) come from ``app.kanji_details``.
 """
-from collections.abc import Iterable
 import re
+from collections.abc import Iterable
 
 from .models import Item
 
@@ -70,7 +70,8 @@ def readings_in_word(word: str, reading: str, details: dict[str, dict]) -> dict[
     ``details`` maps kanji → ``{"onyomi": [...], "kunyomi": [...]}`` in
     KANJIDIC notation (kun okurigana after a ".", affix markers as "-"). Kanji
     are matched left to right against the word's reading, each taking the
-    earliest match after the previous one (longest on a tie); the kana between
+    earliest match after the previous one — longest on a tie, then the reading
+    whose okurigana is what follows the kanji in ``word``; the kana between
     them is okurigana. Returns kanji → ``{"reading", "kind"}`` where
     ``reading`` is the entry exactly as listed, so the caller can highlight it.
 

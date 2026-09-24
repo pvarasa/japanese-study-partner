@@ -1,9 +1,11 @@
 """Kanji-reading drill: its own SRS track, queue selection, and kanji families."""
 import pytest
 
+from app import kanji_details as details_mod
 from app.database import get_db
+from app.kanji import readings_in_word
 from app.main import app
-from app.models import ReadingCard
+from app.models import KanjiInfo, ReadingCard
 
 
 def _add(client, japanese, reading, type="word", meaning="m"):
@@ -46,7 +48,7 @@ def test_kanji_families_list_other_words_sharing_a_kanji(client):
 
 
 def test_new_cards_prefer_best_known_meaning(client):
-    unknown = _add(client, "需要", "じゅよう")
+    _add(client, "需要", "じゅよう")  # never reviewed, so should lose the tie
     known = _add(client, "関係", "かんけい")
     # A meaning review lengthens the item's own interval.
     client.post("/api/study/review", json={"item_id": known, "rating": "good"})
@@ -115,11 +117,6 @@ def test_reading_sessions_count_toward_graded_accuracy(client):
 
 
 # --- Kanji details ---------------------------------------------------------
-
-from app import kanji_details as details_mod  # noqa: E402
-from app.kanji import readings_in_word  # noqa: E402
-from app.models import KanjiInfo  # noqa: E402
-
 
 def _entry(k, meaning, on=(), kun=(), **extra):
     return {

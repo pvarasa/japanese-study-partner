@@ -10,7 +10,13 @@ from ..deps import Db, UserId
 from ..kanji import READING_TYPES, is_reading_candidate, kanji_families
 from ..models import Item, ReadingCard, StudySession
 from ..schemas import (
-    DashboardStats, DayStat, ItemOut, KanjiFamily, ReadingItemOut, SessionProgress, SRSReview,
+    DashboardStats,
+    DayStat,
+    ItemOut,
+    KanjiFamily,
+    ReadingItemOut,
+    SessionProgress,
+    SRSReview,
 )
 from ..srs import process_review
 
