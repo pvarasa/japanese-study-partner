@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import Base, engine
-from .routers import converse, furigana, generate, ingest, items, settings, study, transcribe
+from .routers import converse, furigana, generate, ingest, items, kanji, settings, study, transcribe
 from .routers.transcribe import whisper_enabled
 from .spa import SPAStaticFiles
 from .sqlite_migrate import ensure_columns
@@ -48,6 +48,7 @@ app.add_middleware(
 
 app.include_router(items.router)
 app.include_router(study.router)
+app.include_router(kanji.router)
 app.include_router(ingest.router)
 app.include_router(generate.router)
 app.include_router(furigana.router)

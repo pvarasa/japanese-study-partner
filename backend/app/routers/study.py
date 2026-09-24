@@ -3,11 +3,15 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from ..crud import get_item_for_user
 from ..deps import Db, UserId
-from ..models import Item, StudySession
-from ..schemas import DashboardStats, DayStat, ItemOut, SessionProgress, SRSReview
+from ..kanji import READING_TYPES, is_reading_candidate, kanji_families
+from ..models import Item, ReadingCard, StudySession
+from ..schemas import (
+    DashboardStats, DayStat, ItemOut, KanjiFamily, ReadingItemOut, SessionProgress, SRSReview,
+)
 from ..srs import process_review
 
 router = APIRouter(prefix="/api/study", tags=["study"])
@@ -23,6 +27,7 @@ GRADED_MODES = {
     "fill_blank",
     "sentence_build",
     "grammar_drill",
+    "kanji_reading",
 }
 
 
@@ -106,6 +111,90 @@ def get_practice_items(user_id: UserId, db: Db, limit: int = 20, type: str | Non
     return _serve(items)
 
 
+def _reading_pool(db: Db, user_id: str):
+    """Active vocabulary that could carry a reading card, with cards preloaded.
+
+    "Has kanji" can't be expressed in SQL portably, so callers still pass the
+    rows through ``is_reading_candidate``.
+    """
+    return (
+        _active_items(db, user_id, None)
+        .filter(Item.type.in_(READING_TYPES), Item.reading.isnot(None))
+        .options(joinedload(Item.reading_card))
+    )
+
+
+def _serve_reading(db: Db, user_id: str, items: list[Item]) -> list[ReadingItemOut]:
+    """Serialise reading-drill items with their kanji families attached.
+
+    Siblings come from the whole library (suspended items included — they're
+    still words the learner has met), loaded once for the batch.
+    """
+    if not items:
+        return []
+    library = db.query(Item).filter(Item.user_id == user_id, Item.type.in_(READING_TYPES)).all()
+    return [
+        ReadingItemOut.model_validate(i).model_copy(update={
+            "kanji": [KanjiFamily.model_validate(f) for f in kanji_families(i, library)],
+        })
+        for i in items
+    ]
+
+
+@router.get("/reading/due", response_model=list[ReadingItemOut])
+def get_reading_due(user_id: UserId, db: Db, limit: int = 20):
+    """Items due for the kanji-reading drill.
+
+    Reading cards that are due come first, most overdue first. Any room left
+    is filled with items that have never had a reading review, **best-known
+    meaning first** (longest meaning interval): those are the words whose
+    only gap is the kanji, which is what this drill is for. A card is created
+    by the first review, so never-reviewed items stay "new" until then.
+    """
+    now = datetime.now(timezone.utc)
+    due = [
+        i for i in _reading_pool(db, user_id)
+        .join(ReadingCard, ReadingCard.item_id == Item.id)
+        .filter(ReadingCard.srs_due <= now)
+        .order_by(ReadingCard.srs_due.asc())
+        .limit(limit)
+        if is_reading_candidate(i)
+    ]
+    if len(due) < limit:
+        fresh = (
+            _reading_pool(db, user_id)
+            .outerjoin(ReadingCard, ReadingCard.item_id == Item.id)
+            .filter(ReadingCard.item_id.is_(None))
+            .order_by(Item.srs_interval.desc(), Item.id.asc())
+        )
+        due += [i for i in fresh if is_reading_candidate(i)][: limit - len(due)]
+    random.shuffle(due)
+    return _serve_reading(db, user_id, due)
+
+
+@router.get("/reading/practice", response_model=list[ReadingItemOut])
+def get_reading_practice(user_id: UserId, db: Db, limit: int = 20):
+    """Random reading-drill items regardless of schedule (see /practice)."""
+    pool = [i for i in _reading_pool(db, user_id) if is_reading_candidate(i)]
+    return _serve_reading(db, user_id, random.sample(pool, min(limit, len(pool))))
+
+
+def _review_reading(item: Item, rating: str) -> ReadingCard:
+    """Apply a rating to the item's reading card, creating it on first review.
+
+    SRS values are set explicitly: column defaults only fill in at flush,
+    and ``process_review`` increments them before that.
+    """
+    card = item.reading_card
+    if card is None:
+        card = ReadingCard(
+            user_id=item.user_id, srs_interval=0, srs_ease=2.5, srs_reviews=0,
+            srs_correct=0, srs_hard=0, srs_lapses=0,
+        )
+        item.reading_card = card
+    return process_review(card, rating, auto_suspend=False)
+
+
 def _bump_session(db: Db, session_id: int, user_id: str, *, reviewed=0, correct=0, hard=0):
     """Fold counter deltas into a session, ignoring unknown/foreign sessions.
 
@@ -137,8 +226,16 @@ def review_item(data: SRSReview, user_id: UserId, db: Db):
     item = get_item_for_user(db, data.item_id, user_id)
     if not item:
         raise HTTPException(404, "Item not found")
-    if not data.practice:
-        item = process_review(item, data.rating)
+    if data.card == "reading" and not is_reading_candidate(item):
+        raise HTTPException(422, "This item has no kanji reading to review")
+    scheduled = item
+    if data.card == "reading":
+        # Practice reps skip scheduling, so they don't create a card either.
+        scheduled = item.reading_card
+        if not data.practice:
+            scheduled = _review_reading(item, data.rating)
+    elif not data.practice:
+        process_review(item, data.rating)
     if data.session_id is not None:
         _bump_session(
             db, data.session_id, user_id,
@@ -149,8 +246,8 @@ def review_item(data: SRSReview, user_id: UserId, db: Db):
     db.commit()
     return {
         "ok": True,
-        "next_due": item.srs_due.isoformat(),
-        "interval_days": round(item.srs_interval, 2),
+        "next_due": scheduled.srs_due.isoformat() if scheduled else None,
+        "interval_days": round(scheduled.srs_interval, 2) if scheduled else None,
         "suspended": bool(item.suspended),
     }
 

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # importing models at runtime would cycle — models imports this
-    from .models import Item
+    from .models import Item, ReadingCard
 
 MIN_INTERVAL = 0.00694   # ~10 minutes in fractional days
 HARD_INTERVAL = 0.0416   # ~1 hour in fractional days (used when interval < 1 day)
@@ -49,8 +49,14 @@ def is_leech(item: Item) -> bool:
     )
 
 
-def process_review(item: Item, rating: str) -> Item:
-    """Update an item's SRS fields based on review rating (again/hard/good)."""
+def process_review(item: Item | ReadingCard, rating: str, *, auto_suspend: bool = True):
+    """Update an item's SRS fields based on review rating (again/hard/good).
+
+    Also accepts a ReadingCard, which carries the same SRS columns. Pass
+    ``auto_suspend=False`` for those: reading cards have no suspension of
+    their own, and a word whose kanji won't stick is exactly the one that
+    should keep coming back.
+    """
     now = datetime.now(timezone.utc)
     item.srs_reviews += 1
 
@@ -75,7 +81,7 @@ def process_review(item: Item, rating: str) -> Item:
 
     # Only ever auto-suspend on a lapse. Crossing the threshold on a "good"
     # would yank a card the learner just got right, which reads as a bug.
-    if rating == "again" and is_leech(item):
+    if auto_suspend and rating == "again" and is_leech(item):
         item.suspended = True
 
     return item

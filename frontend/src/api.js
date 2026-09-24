@@ -70,16 +70,26 @@ export const api = {
   // Passing sessionId folds the review into the session's counters server-side,
   // so progress survives abandoning the session part-way. practice=true skips
   // SRS scheduling server-side, so it can't reschedule a card early.
-  reviewItem: (itemId, rating, sessionId = null, practice = false) =>
+  // card='reading' rates the item's separate kanji-reading schedule instead.
+  reviewItem: (itemId, rating, sessionId = null, practice = false, card = 'meaning') =>
     request('/study/review', {
       method: 'POST',
       body: {
         item_id: itemId,
         rating,
+        card,
         ...(sessionId != null && { session_id: sessionId }),
         ...(practice && { practice: true }),
       },
     }),
+  // Kanji-reading drill queues: due reading cards topped up with new ones,
+  // each item carrying the other library words that share its kanji.
+  getReadingDue: (params = {}) => request(`/study/reading/due?${qs(params)}`),
+  getReadingPractice: (params = {}) => request(`/study/reading/practice?${qs(params)}`),
+  // Readings, level, parts, mnemonic and origin for each kanji of an item,
+  // plus which reading this word uses. The first word to contain an uncached
+  // kanji costs one AI call; after that it comes from the server's cache.
+  getItemKanji: (itemId) => request(`/kanji/item/${itemId}`),
   getDashboard: () => request('/study/dashboard'),
   getHistory: (days = 60) => request(`/study/history?days=${days}`),
   startSession: (mode) => request(`/study/session/start?mode=${mode}`, { method: 'POST' }),

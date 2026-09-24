@@ -8,7 +8,12 @@ export const MODES = [
   { id: 'fill_blank', label: 'Fill Blank', desc: 'Complete the sentence' },
   { id: 'sentence_build', label: 'Build Sentence', desc: 'Translate to Japanese' },
   { id: 'grammar_drill', label: 'Grammar Drill', desc: 'Choose the correct usage' },
+  { id: 'kanji_reading', label: 'Read Kanji', desc: 'See the kanji with no furigana, recall the reading' },
 ]
+
+// Drills the item's separate reading card (backend models.ReadingCard) rather
+// than its meaning schedule, and draws from its own queue.
+export const READING_MODE = 'kanji_reading'
 
 // Modes that fetch a question per item rather than showing a plain flashcard.
 // Cloze goes through the same endpoint but is built from the item's stored
@@ -40,6 +45,26 @@ export function isAnswerAccepted(userAnswer, question) {
   if (!given) return false
   const accepted = question.accepted?.length ? question.accepted : [question.answer]
   return accepted.some(a => a.trim() === given)
+}
+
+/** Katakana → hiragana, so a reading typed in either script compares equal. */
+function toHiragana(text) {
+  return text.replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+}
+
+/**
+ * Whether a typed reading matches the stored one. Stored readings sometimes
+ * list alternatives (`いぞん / いそん`), and any of them counts — as does the
+ * whole thing, for pairs like 上がる・下がる (`あがる・さがる`). Spaces,
+ * separators and script (hiragana vs katakana) are ignored.
+ */
+export function isReadingAccepted(typed, reading) {
+  const SEPARATORS = /[/／・,、]/
+  const norm = s => toHiragana(s || '').replace(/\s+/g, '').replace(new RegExp(SEPARATORS, 'g'), '')
+  const given = norm(typed)
+  if (!given) return false
+  const stored = reading || ''
+  return [stored, ...stored.split(SEPARATORS)].some(r => norm(r) === given)
 }
 
 // `example_sentences` is a JSON string in a text column, authored by the LLM at

@@ -3,8 +3,8 @@ import { api } from '../../api'
 import { usePersistentState } from '../../hooks/usePersistentState'
 import { loadValue, saveValue } from '../../storage'
 import {
-  EVALUATE_ERROR, GENERATED_MODES, MODES, QUESTION_ERROR, RATE_ERROR, SHOWN_EXAMPLES, START_ERROR,
-  parseExamples, pickExamples,
+  EVALUATE_ERROR, GENERATED_MODES, MODES, QUESTION_ERROR, RATE_ERROR, READING_MODE, SHOWN_EXAMPLES,
+  START_ERROR, parseExamples, pickExamples,
 } from './studyLogic'
 
 const SESSION_KEY = 'study-session'
@@ -172,9 +172,10 @@ export function useStudySession() {
     setError(null)
     setStartingSession(true)
     try {
-      const due = practice
-        ? await api.getPracticeItems({ limit: 20 })
-        : await api.getDueItems({ limit: 20 })
+      const fetchItems = m === READING_MODE
+        ? (practice ? api.getReadingPractice : api.getReadingDue)
+        : (practice ? api.getPracticeItems : api.getDueItems)
+      const due = await fetchItems({ limit: 20 })
       if (startRunRef.current !== run) return
       if (due.length === 0) {
         setSession(prev => ({ ...prev, done: true }))
@@ -216,7 +217,9 @@ export function useStudySession() {
     try {
       // Passing the session id records this review against the session
       // server-side, so quitting part-way keeps what was already done.
-      await api.reviewItem(item.id, rating, session.sessionId, practice)
+      await api.reviewItem(
+        item.id, rating, session.sessionId, practice, mode === READING_MODE ? 'reading' : 'meaning',
+      )
     } catch (err) {
       // Keep the card in place so the user can retry the same rating.
       setError(err.message || RATE_ERROR)

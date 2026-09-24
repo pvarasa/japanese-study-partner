@@ -2,8 +2,9 @@ import { CheckCircle, X } from 'lucide-react'
 import LevelBadge from '../components/LevelBadge'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
 import FlashcardCard from './study/FlashcardCard'
+import KanjiReadingCard from './study/KanjiReadingCard'
 import QuestionCard from './study/QuestionCard'
-import { MODES, START_ERROR } from './study/studyLogic'
+import { MODES, READING_MODE, START_ERROR } from './study/studyLogic'
 import { useStudySession } from './study/useStudySession'
 
 export default function Study() {
@@ -131,6 +132,24 @@ export default function Study() {
   }
 
   const progress = `${s.current + 1} / ${s.items.length}`
+
+  if (s.mode === READING_MODE) {
+    return (
+      <KanjiReadingCard
+        item={item}
+        nextItem={s.items[s.current + 1]}
+        progress={progress}
+        revealed={s.revealed}
+        setRevealed={s.setRevealed}
+        typed={s.userAnswer}
+        setTyped={s.setUserAnswer}
+        error={s.error}
+        submitting={s.submitting}
+        onRate={s.handleRate}
+        exitStudy={s.exitStudy}
+      />
+    )
+  }
 
   if (s.mode === 'flashcard_jp' || s.mode === 'flashcard_en') {
     return (

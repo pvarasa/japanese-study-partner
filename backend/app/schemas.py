@@ -68,9 +68,66 @@ class ItemOut(BaseModel):
         return [t.name if hasattr(t, "name") else t for t in v]
 
 
+class ReadingCardStats(BaseModel):
+    """SRS state of an item's reading card (see models.ReadingCard)."""
+    srs_interval: float
+    srs_due: datetime
+    srs_reviews: int
+    srs_correct: int
+    srs_hard: int
+    srs_lapses: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KanjiSibling(BaseModel):
+    japanese: str
+    reading: str
+    meaning: str
+
+
+class KanjiFamily(BaseModel):
+    """One kanji of a word, plus the other library words that contain it."""
+    kanji: str
+    words: list[KanjiSibling] = []
+
+
+class KanjiComponent(BaseModel):
+    part: str
+    meaning: str = ""
+
+
+class KanjiDetail(BaseModel):
+    """Cached facts about one kanji (models.KanjiInfo), plus which of its
+    readings the requested word uses — a best guess, None when irregular."""
+    kanji: str
+    meaning: str
+    onyomi: list[str] = []
+    kunyomi: list[str] = []
+    jlpt_level: Optional[str] = None
+    strokes: Optional[int] = None
+    components: list[KanjiComponent] = []
+    mnemonic: str = ""
+    origin: str = ""
+    reading_in_word: Optional[str] = None
+    reading_kind: Optional[Literal["on", "kun"]] = None
+
+
+class ReadingItemOut(ItemOut):
+    """An item served for the kanji-reading drill.
+
+    ``reading_card`` is None for an item that has never had a reading review.
+    """
+    reading_card: Optional[ReadingCardStats] = None
+    kanji: list[KanjiFamily] = []
+
+
 class SRSReview(BaseModel):
     item_id: int
     rating: Literal["again", "hard", "good"]
+    # Which SRS track the rating applies to: the item's own (meaning recall)
+    # or its reading card (see models.ReadingCard).
+    card: Literal["meaning", "reading"] = "meaning"
     # When present the server folds this review into the session's counters, so
     # progress survives abandoning the session part-way. See routers/study.py.
     session_id: Optional[int] = None
