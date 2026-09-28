@@ -123,7 +123,9 @@ def _entry(k, meaning, on=(), kun=(), **extra):
         "kanji": k, "meaning": meaning, "onyomi": list(on), "kunyomi": list(kun),
         "jlpt_level": "N3", "strokes": 9,
         "components": [{"part": "田", "meaning": "field"}],
-        "mnemonic": "m", "origin": "o", **extra,
+        "mnemonic": "m", "origin": "o",
+        "example_words": [{"word": f"{k}語", "reading": "ご", "meaning": "w", "link": "l"}],
+        **extra,
     }
 
 
@@ -188,6 +190,35 @@ def test_kanji_details_sanitise_model_output(client, fake_kanji_model):
     assert got[0]["onyomi"] == ["イン", "ジン"]
     assert got[0]["jlpt_level"] is None
     assert got[0]["strokes"] is None
+    assert _db().query(KanjiInfo).count() == 1
+
+
+def test_kanji_example_words_are_sanitised(client, fake_kanji_model):
+    fake_kanji_model([_entry("決", "decide", example_words=[
+        {"word": "決心", "reading": "けっしん", "meaning": "determination", "link": "decide + heart"},
+        {"word": "決心", "reading": "けっしん", "meaning": "dup"},     # duplicate
+        {"word": "猫", "reading": "ねこ", "meaning": "cat"},          # lacks the kanji
+        {"word": "解決", "reading": "かいけつ", "meaning": ""},        # no gloss
+        "junk",
+    ])])
+    item_id = _add(client, "決める", "きめる")
+    got = client.get(f"/api/kanji/item/{item_id}").json()
+    assert got[0]["example_words"] == [
+        {"word": "決心", "reading": "けっしん", "meaning": "determination", "link": "decide + heart"},
+    ]
+
+
+def test_kanji_rows_without_example_words_are_refilled(client, fake_kanji_model):
+    fake_kanji_model([_entry("断", "decline", on=["ダン"], example_words=[])])
+    first = _add(client, "断る", "ことわる")
+    assert client.get(f"/api/kanji/item/{first}").json()[0]["example_words"] == []
+
+    # The refill takes only the example words; the cached notes stay put.
+    calls = fake_kanji_model([_entry("断", "CHANGED", on=["ダン"])])
+    got = client.get(f"/api/kanji/item/{first}").json()[0]
+    assert len(calls) == 2  # the fixture keeps one list across installs
+    assert got["meaning"] == "decline"
+    assert [w["word"] for w in got["example_words"]] == ["断語"]
     assert _db().query(KanjiInfo).count() == 1
 
 

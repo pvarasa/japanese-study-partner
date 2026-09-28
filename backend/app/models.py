@@ -123,6 +123,7 @@ class KanjiInfo(Base):
     components = Column(Text, nullable=False)       # JSON list of {part, meaning}
     mnemonic = Column(Text, nullable=False)
     origin = Column(Text, nullable=False)           # etymology / memorable fact
+    example_words = Column(Text, nullable=False, default="[]")  # JSON list of {word, reading, meaning, link}
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

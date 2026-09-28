@@ -46,11 +46,17 @@ Each object has:
   etymology (pictograph, phonetic component, what the original form depicted) or a notable
   fact about its use. Do NOT invent history; if the origin is disputed, say "traditionally
   explained as..."
+- "example_words": array of 3-4 common words (other than {word}) that use this kanji, chosen so that
+  together they show how the kanji's meaning carries into words: prefer words where you can see the
+  meaning at work, and mix on'yomi and kun'yomi uses where both are common. Favour words an N3-N4
+  learner is likely to meet. Each is {{"word": "<word in kanji>", "reading": "<hiragana>",
+  "meaning": "<short English gloss>", "link": "<under 12 words: how this kanji's meaning shows up in
+  the word, e.g. 'decide + cut off -> a decisive break'>"}}
 
 Return ONLY valid JSON, no markdown fences."""
 
-# Roughly 250 tokens per kanji, with headroom for the wrapper and long notes.
-_TOKENS_PER_KANJI = 450
+# Roughly 400 tokens per kanji, with headroom for the wrapper and long notes.
+_TOKENS_PER_KANJI = 700
 
 
 def _loads_list(raw: str | None) -> list:
@@ -97,7 +103,20 @@ def _row_from_reply(kanji: str, data: dict) -> KanjiInfo:
         components=json.dumps(components, ensure_ascii=False),
         mnemonic=str(data.get("mnemonic") or "").strip(),
         origin=str(data.get("origin") or "").strip(),
+        example_words=json.dumps(_example_words(kanji, data.get("example_words")), ensure_ascii=False),
     )
+
+
+def _example_words(kanji: str, value) -> list[dict]:
+    """Keep the entries that actually contain ``kanji`` and have a gloss."""
+    out = []
+    for w in value if isinstance(value, list) else []:
+        if not isinstance(w, dict):
+            continue
+        entry = {k: str(w.get(k) or "").strip() for k in ("word", "reading", "meaning", "link")}
+        if kanji in entry["word"] and entry["meaning"] and entry["word"] not in {e["word"] for e in out}:
+            out.append(entry)
+    return out[:4]
 
 
 def generate_kanji_info(kanji: list[str], *, word: str, reading: str) -> list[KanjiInfo]:
@@ -123,6 +142,10 @@ def generate_kanji_info(kanji: list[str], *, word: str, reading: str) -> list[Ka
 def kanji_info_for(db: Session, word: str, reading: str) -> dict[str, KanjiInfo]:
     """Details for every kanji in ``word``, generating whatever isn't cached.
 
+    Rows cached before ``example_words`` existed are asked again, but only
+    that field is taken from the reply: the rest is what the learner has
+    already seen, so it shouldn't shift under them.
+
     Two requests can race to generate the same kanji (the drill prefetches the
     next card while the current one loads). The loser's insert fails on the
     primary key; it rolls back and serves its own copy, which is equivalent.
@@ -131,15 +154,18 @@ def kanji_info_for(db: Session, word: str, reading: str) -> dict[str, KanjiInfo]
     if not chars:
         return {}
     cached = {r.kanji: r for r in db.query(KanjiInfo).filter(KanjiInfo.kanji.in_(chars))}
-    missing = [k for k in chars if k not in cached]
-    if missing:
-        fresh = generate_kanji_info(missing, word=word, reading=reading)
-        db.add_all(fresh)
+    ask = [k for k in chars if k not in cached or not _loads_list(cached[k].example_words)]
+    if ask:
+        for row in generate_kanji_info(ask, word=word, reading=reading):
+            if row.kanji in cached:
+                cached[row.kanji].example_words = row.example_words
+            else:
+                db.add(row)
+                cached[row.kanji] = row
         try:
             db.commit()
         except IntegrityError:
             db.rollback()
-        cached.update({r.kanji: r for r in fresh})
     return cached
 
 
@@ -154,4 +180,5 @@ def serialise(row: KanjiInfo) -> dict:
         "components": [c for c in _loads_list(row.components) if isinstance(c, dict)],
         "mnemonic": row.mnemonic,
         "origin": row.origin,
+        "example_words": [w for w in _loads_list(row.example_words) if isinstance(w, dict)],
     }

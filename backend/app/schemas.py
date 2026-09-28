@@ -97,6 +97,13 @@ class KanjiComponent(BaseModel):
     meaning: str = ""
 
 
+class KanjiExampleWord(BaseModel):
+    word: str
+    reading: str = ""
+    meaning: str
+    link: str = ""  # how the kanji's meaning shows up in the word
+
+
 class KanjiDetail(BaseModel):
     """Cached facts about one kanji (models.KanjiInfo), plus which of its
     readings the requested word uses — a best guess, None when irregular."""
@@ -109,6 +116,7 @@ class KanjiDetail(BaseModel):
     components: list[KanjiComponent] = []
     mnemonic: str = ""
     origin: str = ""
+    example_words: list[KanjiExampleWord] = []
     reading_in_word: Optional[str] = None
     reading_kind: Optional[Literal["on", "kun"]] = None
 

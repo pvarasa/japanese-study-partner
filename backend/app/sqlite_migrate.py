@@ -28,6 +28,9 @@ ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "study_sessions": [
         ("items_hard", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    "kanji_info": [
+        ("example_words", "TEXT NOT NULL DEFAULT '[]'"),
+    ],
 }
 
 

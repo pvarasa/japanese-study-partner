@@ -82,7 +82,7 @@ export default function KanjiReadingCard({
               </div>
             )}
             <div className="text-lg font-medium mt-3">{item.meaning}</div>
-            <KanjiBreakdown families={item.kanji || []} {...kanji} />
+            <KanjiBreakdown word={item.japanese} families={item.kanji || []} {...kanji} />
           </div>
         )}
       </div>
@@ -98,7 +98,7 @@ export default function KanjiReadingCard({
  * character comes from, and the other library words that share it — the same
  * kanji read differently (決断 / 断る) is where readings click.
  */
-function KanjiBreakdown({ families, details, error, retry }) {
+function KanjiBreakdown({ word, families, details, error, retry }) {
   if (!families.length) return null
   return (
     <div className="mt-5 text-left space-y-2">
@@ -113,13 +113,13 @@ function KanjiBreakdown({ families, details, error, retry }) {
         </div>
       )}
       {families.map(f => (
-        <KanjiPanel key={f.kanji} family={f} detail={details?.[f.kanji]} loading={!details && !error} />
+        <KanjiPanel key={f.kanji} word={word} family={f} detail={details?.[f.kanji]} loading={!details && !error} />
       ))}
     </div>
   )
 }
 
-function KanjiPanel({ family, detail, loading }) {
+function KanjiPanel({ word, family, detail, loading }) {
   return (
     <div className="flex gap-3 bg-gray-800/70 border border-gray-800 rounded-lg p-3">
       <div className="w-12 shrink-0 text-center">
@@ -187,6 +187,8 @@ function KanjiPanel({ family, detail, loading }) {
           </>
         )}
 
+        <ExampleWords kanji={family.kanji} words={detail?.example_words} skip={[word, ...family.words.map(w => w.japanese)]} />
+
         {family.words.length > 0 && (
           <div className="pt-2 border-t border-gray-700/60 space-y-1">
             <div className="text-[11px] uppercase tracking-wide text-gray-500">Also in your library</div>
@@ -200,6 +202,32 @@ function KanjiPanel({ family, detail, loading }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Common words built on the kanji, each with a one-line note on how the
+ * kanji's meaning shows up in it. The word being drilled and the ones listed
+ * from the library are left out so the lists don't repeat each other. */
+function ExampleWords({ kanji, words, skip }) {
+  const known = new Set(skip)
+  const shown = (words || []).filter(w => !known.has(w.word))
+  if (!shown.length) return null
+  return (
+    <div className="pt-2 border-t border-gray-700/60 space-y-1.5">
+      <div className="text-[11px] uppercase tracking-wide text-gray-500">
+        Other words with <span className="jp-text normal-case">{kanji}</span>
+      </div>
+      {shown.map(w => (
+        <div key={w.word}>
+          <div className="truncate">
+            <span className="jp-text text-gray-100">{w.word}</span>
+            {w.reading && <span className="jp-text text-indigo-300 ml-2">{w.reading}</span>}
+            <span className="text-gray-400 ml-2">{w.meaning}</span>
+          </div>
+          {w.link && <div className="text-xs text-gray-500">{w.link}</div>}
+        </div>
+      ))}
     </div>
   )
 }
