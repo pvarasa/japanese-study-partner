@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle, Lightbulb, ScrollText, X } from 'lucide-react'
+import { AlertCircle, CheckCircle, ScrollText, X } from 'lucide-react'
 import { SkeletonLine } from '../../components/Skeleton'
 import SpeakButton from '../../components/SpeakButton'
 import RatingButtons from './RatingButtons'
@@ -94,9 +94,10 @@ export default function KanjiReadingCard({
 
 /**
  * One panel per kanji of the word: meaning, level, on/kun readings with the one
- * this word uses highlighted, the parts it's built from, a mnemonic, where the
- * character comes from, and the other library words that share it — the same
- * kanji read differently (決断 / 断る) is where readings click.
+ * this word uses highlighted, the parts it's built from, where the character
+ * comes from, common words that show its meaning at work, and the other library
+ * words that share it — the same kanji read differently (決断 / 断る) is where
+ * readings click.
  */
 function KanjiBreakdown({ word, families, details, error, retry }) {
   if (!families.length) return null
@@ -145,14 +146,7 @@ function KanjiPanel({ word, family, detail, loading }) {
           <>
             <div className="flex items-baseline justify-between gap-2">
               <span className="font-medium text-gray-100">{detail.meaning}</span>
-              {detail.jlpt_level && (
-                <span
-                  title="Unofficial: the JLPT hasn't published kanji lists since 2010, so this follows common study lists"
-                  className="shrink-0 text-[11px] text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 rounded-full px-1.5 py-px"
-                >
-                  {detail.jlpt_level}
-                </span>
-              )}
+              <LevelPill level={detail.jlpt_level} />
             </div>
 
             <ReadingRow label="on" title="On'yomi — the Chinese-derived reading, mostly used in compounds"
@@ -172,12 +166,6 @@ function KanjiPanel({ word, family, detail, loading }) {
               </div>
             )}
 
-            {detail.mnemonic && (
-              <p className="flex gap-1.5 text-amber-100/90">
-                <Lightbulb size={14} className="shrink-0 mt-0.5 text-amber-400" />
-                <span>{detail.mnemonic}</span>
-              </p>
-            )}
             {detail.origin && (
               <p className="flex gap-1.5 text-gray-400">
                 <ScrollText size={14} className="shrink-0 mt-0.5 text-gray-500" />
@@ -190,14 +178,10 @@ function KanjiPanel({ word, family, detail, loading }) {
         <ExampleWords kanji={family.kanji} words={detail?.example_words} skip={[word, ...family.words.map(w => w.japanese)]} />
 
         {family.words.length > 0 && (
-          <div className="pt-2 border-t border-gray-700/60 space-y-1">
+          <div className="pt-2 border-t border-gray-700/60 space-y-1.5">
             <div className="text-[11px] uppercase tracking-wide text-gray-500">Also in your library</div>
             {family.words.map(w => (
-              <div key={w.japanese} className="truncate">
-                <span className="jp-text text-gray-100">{w.japanese}</span>
-                <span className="jp-text text-indigo-300 ml-2">{w.reading}</span>
-                <span className="text-gray-500 ml-2">{w.meaning}</span>
-              </div>
+              <WordRow key={w.japanese} word={w.japanese} reading={w.reading} meaning={w.meaning} level={w.jlpt_level} />
             ))}
           </div>
         )}
@@ -219,16 +203,47 @@ function ExampleWords({ kanji, words, skip }) {
         Other words with <span className="jp-text normal-case">{kanji}</span>
       </div>
       {shown.map(w => (
-        <div key={w.word}>
-          <div className="truncate">
-            <span className="jp-text text-gray-100">{w.word}</span>
-            {w.reading && <span className="jp-text text-indigo-300 ml-2">{w.reading}</span>}
-            <span className="text-gray-400 ml-2">{w.meaning}</span>
-          </div>
-          {w.link && <div className="text-xs text-gray-500">{w.link}</div>}
-        </div>
+        <WordRow key={w.word} word={w.word} reading={w.reading} meaning={w.meaning} note={w.link} level={w.jlpt_level} />
       ))}
     </div>
+  )
+}
+
+/** Word with its reading beneath on the left, English on the right. Stacking
+ * the reading gives the meaning the rest of the width, so it rarely wraps on a
+ * phone, and when it does it wraps within its own column instead of under the
+ * word. */
+function WordRow({ word, reading, meaning, note, level }) {
+  return (
+    <div className="flex gap-3">
+      <div className="w-[4.5rem] shrink-0 leading-tight">
+        <div className="jp-text text-gray-100">{word}</div>
+        {reading && <div className="text-xs text-indigo-300"><span className="jp-text">{reading}</span></div>}
+      </div>
+      <div className="flex-1 min-w-0 leading-snug">
+        {/* Inline after the text, not a column of its own: a right-hand column
+            would take width from the meaning and make it wrap again. */}
+        <div className="text-gray-300">
+          {meaning}
+          {level && <> <LevelPill level={level} small /></>}
+        </div>
+        {note && <div className="text-xs text-gray-500">{note}</div>}
+      </div>
+    </div>
+  )
+}
+
+/** JLPT level badge. Unofficial for kanji and vocabulary alike: the JLPT
+ * hasn't published lists since 2010, so levels follow common study lists. */
+function LevelPill({ level, small = false }) {
+  if (!level) return null
+  return (
+    <span
+      title="Unofficial: the JLPT hasn't published kanji or vocabulary lists since 2010, so this follows common study lists"
+      className={`shrink-0 text-indigo-300 bg-indigo-500/10 border border-indigo-500/30 rounded-full ${small ? 'text-[10px] px-1 leading-4' : 'text-[11px] px-1.5 py-px'}`}
+    >
+      {level}
+    </span>
   )
 }
 

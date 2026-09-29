@@ -37,6 +37,16 @@ def test_trailing_whitespace_before_close_fence():
     assert parse_json_response(raw) == {"a": 1}
 
 
+def test_json_wrapped_in_prose_is_recovered():
+    raw = 'Here is the JSON:\n{"a": {"b": 1}}\nLet me know if you need more.'
+    assert parse_json_response(raw) == {"a": {"b": 1}}
+
+
+def test_prose_without_json_raises():
+    with pytest.raises(json.JSONDecodeError):
+        parse_json_response("Could you share the text you'd like me to analyse?")
+
+
 def test_invalid_json_raises():
     with pytest.raises(json.JSONDecodeError):
         parse_json_response("not json")

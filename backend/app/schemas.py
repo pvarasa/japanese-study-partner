@@ -84,6 +84,7 @@ class KanjiSibling(BaseModel):
     japanese: str
     reading: str
     meaning: str
+    jlpt_level: Optional[str] = None
 
 
 class KanjiFamily(BaseModel):
@@ -102,6 +103,7 @@ class KanjiExampleWord(BaseModel):
     reading: str = ""
     meaning: str
     link: str = ""  # how the kanji's meaning shows up in the word
+    jlpt_level: Optional[str] = None
 
 
 class KanjiDetail(BaseModel):
@@ -114,7 +116,6 @@ class KanjiDetail(BaseModel):
     jlpt_level: Optional[str] = None
     strokes: Optional[int] = None
     components: list[KanjiComponent] = []
-    mnemonic: str = ""
     origin: str = ""
     example_words: list[KanjiExampleWord] = []
     reading_in_word: Optional[str] = None

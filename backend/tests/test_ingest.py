@@ -52,3 +52,20 @@ def test_save_does_not_require_the_duplicate_field(client, monkeypatch):
     })
     assert res.status_code == 200
     assert res.json()["saved_count"] == 1
+
+
+def test_null_title_falls_back_instead_of_failing(client, monkeypatch):
+    monkeypatch.setattr(ingest_mod, "_extract_with_llm", lambda text, level: {
+        "title": None, "items": [{"type": "word", "japanese": "作品", "meaning": "work"}],
+    })
+    res = client.post("/api/ingest/text", data={"content": "作品"})
+    assert res.status_code == 200, res.text
+    assert res.json()["source_title"] == "Text input"
+
+
+def test_prompt_accepts_a_single_word():
+    """A lone word (romaji, kana, kanji) used to get a prose "please paste some
+    text" reply, which failed to parse; the prompt now tells the model to
+    study the word itself and never answer outside the JSON."""
+    assert "single word" in ingest_mod.EXTRACT_PROMPT
+    assert "Never ask for more content" in ingest_mod.EXTRACT_PROMPT

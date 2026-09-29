@@ -1,4 +1,6 @@
 """Kanji-reading drill: its own SRS track, queue selection, and kanji families."""
+import json
+
 import pytest
 
 from app import kanji_details as details_mod
@@ -123,7 +125,7 @@ def _entry(k, meaning, on=(), kun=(), **extra):
         "kanji": k, "meaning": meaning, "onyomi": list(on), "kunyomi": list(kun),
         "jlpt_level": "N3", "strokes": 9,
         "components": [{"part": "田", "meaning": "field"}],
-        "mnemonic": "m", "origin": "o",
+        "origin": "o",
         "example_words": [{"word": f"{k}語", "reading": "ご", "meaning": "w", "link": "l"}],
         **extra,
     }
@@ -204,14 +206,19 @@ def test_kanji_example_words_are_sanitised(client, fake_kanji_model):
     item_id = _add(client, "決める", "きめる")
     got = client.get(f"/api/kanji/item/{item_id}").json()
     assert got[0]["example_words"] == [
-        {"word": "決心", "reading": "けっしん", "meaning": "determination", "link": "decide + heart"},
+        {"word": "決心", "reading": "けっしん", "meaning": "determination", "link": "decide + heart",
+         "jlpt_level": None},
     ]
 
 
 def test_kanji_rows_without_example_words_are_refilled(client, fake_kanji_model):
-    fake_kanji_model([_entry("断", "decline", on=["ダン"], example_words=[])])
+    fake_kanji_model([_entry("断", "decline", on=["ダン"])])
     first = _add(client, "断る", "ことわる")
-    assert client.get(f"/api/kanji/item/{first}").json()[0]["example_words"] == []
+    client.get(f"/api/kanji/item/{first}")
+    # Simulate a row cached before the column existed: it holds the default.
+    db = _db()
+    db.query(KanjiInfo).one().example_words = details_mod.NOT_GENERATED
+    db.commit()
 
     # The refill takes only the example words; the cached notes stay put.
     calls = fake_kanji_model([_entry("断", "CHANGED", on=["ダン"])])
@@ -220,6 +227,60 @@ def test_kanji_rows_without_example_words_are_refilled(client, fake_kanji_model)
     assert got["meaning"] == "decline"
     assert [w["word"] for w in got["example_words"]] == ["断語"]
     assert _db().query(KanjiInfo).count() == 1
+
+
+def test_kanji_example_words_carry_a_level(client, fake_kanji_model):
+    fake_kanji_model([_entry("決", "decide", example_words=[
+        {"word": "決心", "reading": "けっしん", "meaning": "determination", "jlpt_level": "n3"},
+        {"word": "決定", "reading": "けってい", "meaning": "decision", "jlpt_level": "N9"},
+    ])])
+    item_id = _add(client, "決める", "きめる")
+    got = client.get(f"/api/kanji/item/{item_id}").json()[0]["example_words"]
+    assert [w["jlpt_level"] for w in got] == ["N3", None]
+
+
+def test_kanji_example_words_without_levels_are_refilled(client, fake_kanji_model):
+    fake_kanji_model([_entry("断", "decline", on=["ダン"])])
+    item_id = _add(client, "断る", "ことわる")
+    client.get(f"/api/kanji/item/{item_id}")
+    # Simulate a row cached before example words carried a level.
+    db = _db()
+    row = db.query(KanjiInfo).one()
+    words = json.loads(row.example_words)
+    for w in words:
+        del w["jlpt_level"]
+    row.example_words = json.dumps(words, ensure_ascii=False)
+    db.commit()
+
+    calls = fake_kanji_model([_entry("断", "CHANGED", example_words=[
+        {"word": "判断", "reading": "はんだん", "meaning": "judgment", "jlpt_level": "N2"},
+    ])])
+    got = client.get(f"/api/kanji/item/{item_id}").json()[0]
+    assert len(calls) == 2  # the fixture keeps one list across installs
+    assert got["meaning"] == "decline"
+    assert got["example_words"][0]["jlpt_level"] == "N2"
+
+
+def test_kanji_with_no_usable_example_words_is_not_asked_again(client, fake_kanji_model):
+    calls = fake_kanji_model([_entry("塁", "base", example_words=[])])
+    item_id = _add(client, "塁", "るい")
+    client.get(f"/api/kanji/item/{item_id}")
+    got = {d["kanji"]: d for d in client.get(f"/api/kanji/item/{item_id}").json()}
+    assert got["塁"]["example_words"] == []
+    assert len(calls) == 1
+
+
+def test_library_siblings_carry_their_level(client):
+    client.post("/api/items/", json={
+        "type": "word", "japanese": "判断", "reading": "はんだん", "meaning": "judgment",
+        "jlpt_level": "N2",
+    })
+    _add(client, "断る", "ことわる")
+    due = client.get("/api/study/reading/practice").json()
+    fam = next(i for i in due if i["japanese"] == "断る")["kanji"][0]
+    assert fam["words"] == [
+        {"japanese": "判断", "reading": "はんだん", "meaning": "judgment", "jlpt_level": "N2"},
+    ]
 
 
 def test_kanji_details_bad_reply_is_a_502(client, monkeypatch):

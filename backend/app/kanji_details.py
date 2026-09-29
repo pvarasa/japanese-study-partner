@@ -1,11 +1,10 @@
-"""Per-kanji details for the reading drill's reveal: readings, level, parts, a
-mnemonic, and where the character comes from.
+"""Per-kanji details for the reading drill's reveal: readings, level, parts,
+where the character comes from, and common words that show its meaning at work.
 
 Seeing the kanji families from the learner's own library shows *that* a kanji
-is read differently in different words; this is the "why" and the "how do I
-remember it". One Claude call covers every kanji of a word that isn't cached
-yet, and the result is stored in ``KanjiInfo`` for all users, so each kanji is
-paid for once.
+is read differently in different words; this is the "why". One Claude call
+covers every kanji of a word that isn't cached yet, and the result is stored in
+``KanjiInfo`` for all users, so each kanji is paid for once.
 """
 import json
 import logging
@@ -20,10 +19,16 @@ from .models import KanjiInfo
 
 log = logging.getLogger("app.kanji_details")
 
+# ``example_words`` of a row that predates the field: the column default, which
+# generation never writes. A generation that found no usable words stores
+# ``NO_EXAMPLES`` instead, so that kanji isn't asked again on every view.
+NOT_GENERATED = "[]"
+NO_EXAMPLES = "null"
+
 # Not tied to the user's JLPT setting, unlike the other prompts: the output is
 # cached once for everyone, and facts about a kanji don't vary by level.
 KANJI_PROMPT = """You are a Japanese kanji teacher writing study notes for an intermediate (around JLPT N3) learner
-who remembers kanji best through vivid stories and real history.
+who remembers kanji best through real history and seeing them at work in words.
 
 Write notes for each of these kanji: {kanji_list}
 (The learner met them in the word {word} ({reading}), but the notes are about the kanji in general.)
@@ -40,8 +45,6 @@ Each object has:
 - "strokes": stroke count as an integer
 - "components": array of 1-4 visual building blocks, each {{"part": "<character>", "meaning": "<short English>"}}.
   Use the recognisable parts a learner would see (radicals or common components), not every stroke
-- "mnemonic": 1-2 sentences, a vivid, concrete picture that ties the components to the meaning.
-  Use the components you listed. Keep it memorable rather than clever
 - "origin": 1-2 sentences of genuinely interesting, accurate background: the character's
   etymology (pictograph, phonetic component, what the original form depicted) or a notable
   fact about its use. Do NOT invent history; if the origin is disputed, say "traditionally
@@ -51,7 +54,8 @@ Each object has:
   meaning at work, and mix on'yomi and kun'yomi uses where both are common. Favour words an N3-N4
   learner is likely to meet. Each is {{"word": "<word in kanji>", "reading": "<hiragana>",
   "meaning": "<short English gloss>", "link": "<under 12 words: how this kanji's meaning shows up in
-  the word, e.g. 'decide + cut off -> a decisive break'>"}}
+  the word, e.g. 'decide + cut off -> a decisive break'>", "jlpt_level": "<the JLPT vocabulary level
+  it's usually listed under in study lists, "N5"-"N1", or null if it isn't on them>"}}
 
 Return ONLY valid JSON, no markdown fences."""
 
@@ -101,19 +105,28 @@ def _row_from_reply(kanji: str, data: dict) -> KanjiInfo:
         jlpt_level=level if level in VALID_LEVELS else None,
         strokes=strokes,
         components=json.dumps(components, ensure_ascii=False),
-        mnemonic=str(data.get("mnemonic") or "").strip(),
         origin=str(data.get("origin") or "").strip(),
-        example_words=json.dumps(_example_words(kanji, data.get("example_words")), ensure_ascii=False),
+        example_words=_dump_examples(_example_words(kanji, data.get("example_words"))),
     )
 
 
+def _dump_examples(words: list[dict]) -> str:
+    return json.dumps(words, ensure_ascii=False) if words else NO_EXAMPLES
+
+
 def _example_words(kanji: str, value) -> list[dict]:
-    """Keep the entries that actually contain ``kanji`` and have a gloss."""
+    """Keep the entries that actually contain ``kanji`` and have a gloss.
+
+    ``jlpt_level`` is always present (None when off the lists or garbled), so
+    its absence marks a row cached before levels were asked for.
+    """
     out = []
     for w in value if isinstance(value, list) else []:
         if not isinstance(w, dict):
             continue
         entry = {k: str(w.get(k) or "").strip() for k in ("word", "reading", "meaning", "link")}
+        level = str(w.get("jlpt_level") or "").strip().upper()
+        entry["jlpt_level"] = level if level in VALID_LEVELS else None
         if kanji in entry["word"] and entry["meaning"] and entry["word"] not in {e["word"] for e in out}:
             out.append(entry)
     return out[:4]
@@ -142,8 +155,9 @@ def generate_kanji_info(kanji: list[str], *, word: str, reading: str) -> list[Ka
 def kanji_info_for(db: Session, word: str, reading: str) -> dict[str, KanjiInfo]:
     """Details for every kanji in ``word``, generating whatever isn't cached.
 
-    Rows cached before ``example_words`` existed are asked again, but only
-    that field is taken from the reply: the rest is what the learner has
+    Rows cached before ``example_words`` existed, or before each example
+    carried a ``jlpt_level``, are asked again (once: see ``NO_EXAMPLES``), but
+    only that field is taken from the reply: the rest is what the learner has
     already seen, so it shouldn't shift under them.
 
     Two requests can race to generate the same kanji (the drill prefetches the
@@ -154,7 +168,7 @@ def kanji_info_for(db: Session, word: str, reading: str) -> dict[str, KanjiInfo]
     if not chars:
         return {}
     cached = {r.kanji: r for r in db.query(KanjiInfo).filter(KanjiInfo.kanji.in_(chars))}
-    ask = [k for k in chars if k not in cached or not _loads_list(cached[k].example_words)]
+    ask = [k for k in chars if k not in cached or _examples_stale(cached[k])]
     if ask:
         for row in generate_kanji_info(ask, word=word, reading=reading):
             if row.kanji in cached:
@@ -169,6 +183,12 @@ def kanji_info_for(db: Session, word: str, reading: str) -> dict[str, KanjiInfo]
     return cached
 
 
+def _examples_stale(row: KanjiInfo) -> bool:
+    if row.example_words == NOT_GENERATED:
+        return True
+    return any(isinstance(w, dict) and "jlpt_level" not in w for w in _loads_list(row.example_words))
+
+
 def serialise(row: KanjiInfo) -> dict:
     return {
         "kanji": row.kanji,
@@ -178,7 +198,6 @@ def serialise(row: KanjiInfo) -> dict:
         "jlpt_level": row.jlpt_level,
         "strokes": row.strokes,
         "components": [c for c in _loads_list(row.components) if isinstance(c, dict)],
-        "mnemonic": row.mnemonic,
         "origin": row.origin,
         "example_words": [w for w in _loads_list(row.example_words) if isinstance(w, dict)],
     }

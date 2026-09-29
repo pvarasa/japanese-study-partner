@@ -49,6 +49,13 @@ Focus on items that would be most useful for a JLPT {level} learner:
 
 Skip items that are clearly far below the learner's level unless they are genuinely useful (e.g. common idioms). Prefer items that stretch the learner a little.
 
+The content may be as short as a single word or phrase, and may be written in romaji, kana, kanji
+or even English (e.g. "sakuhin", "さくひん", "to give up"). In that case the learner wants to study
+that word itself: return it as one item in standard Japanese spelling (e.g. "sakuhin" -> 作品),
+plus any closely related items worth learning alongside it. Never ask for more content or reply
+with anything other than the JSON below; if there is truly nothing to study, return an empty "items"
+array.
+
 Return at most {max_items} items. If the text contains more than that, pick the {max_items} most valuable ones rather than covering everything.
 
 Return a JSON object with:
@@ -168,7 +175,9 @@ async def _extract_and_respond(
         items = _parse_items(result.get("items"))
         _mark_duplicates(db, user_id, items)
         return IngestResponse(
-            source_title=result.get("title", default_title),
+            # `or`, not a .get default: the model sometimes sends "title": null,
+            # which would fail validation and cost the user the whole import.
+            source_title=str(result.get("title") or default_title),
             items=items,
         )
 

@@ -71,9 +71,21 @@ def get_anthropic_client() -> Anthropic:
 def parse_json_response(raw: str) -> dict:
     """Parse a JSON object from a Claude response.
 
-    Strips optional ```json / ``` markdown fences and surrounding whitespace.
-    Raises json.JSONDecodeError if the stripped payload isn't valid JSON.
+    Strips optional ```json / ``` markdown fences and surrounding whitespace,
+    and falls back to the outermost ``{...}`` when the model wraps the object
+    in a sentence ("Here is the JSON: {...}"). Raises json.JSONDecodeError if
+    no valid JSON object can be recovered.
     """
+    try:
+        return json.loads(_strip_fences(raw))
+    except json.JSONDecodeError:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        return json.loads(raw[start:end + 1])
+
+
+def _strip_fences(raw: str) -> str:
     raw = raw.strip()
     if raw.startswith("```"):
         if "\n" in raw:
@@ -83,7 +95,7 @@ def parse_json_response(raw: str) -> dict:
         raw = raw.rstrip()
         if raw.endswith("```"):
             raw = raw[:-3].rstrip()
-    return json.loads(raw)
+    return raw
 
 
 def complete_json(content: str, *, max_tokens: int, model: str = DEFAULT_MODEL) -> dict:

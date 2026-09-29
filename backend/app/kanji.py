@@ -5,7 +5,7 @@ which items get a reading card, to show on the reveal the other words in the
 library that share each kanji, and to point at which of a kanji's readings
 the word uses. Seeing 決断 (けつだん) next to 断る (ことわる) teaches the
 on/kun split from words the learner already knows. The per-kanji facts
-themselves (readings, mnemonic, origin) come from ``app.kanji_details``.
+themselves (readings, origin, example words) come from ``app.kanji_details``.
 """
 import re
 from collections.abc import Iterable
@@ -114,7 +114,10 @@ def kanji_families(item: Item, library: Iterable[Item]) -> list[dict]:
     families = []
     for k in kanji_in(item.japanese):
         words = [
-            {"japanese": other.japanese, "reading": other.reading or "", "meaning": other.meaning}
+            {
+                "japanese": other.japanese, "reading": other.reading or "",
+                "meaning": other.meaning, "jlpt_level": other.jlpt_level,
+            }
             for other in library
             if other.id != item.id and k in other.japanese
         ][:MAX_SIBLINGS]

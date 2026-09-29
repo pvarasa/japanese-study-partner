@@ -86,7 +86,7 @@ export const api = {
   // each item carrying the other library words that share its kanji.
   getReadingDue: (params = {}) => request(`/study/reading/due?${qs(params)}`),
   getReadingPractice: (params = {}) => request(`/study/reading/practice?${qs(params)}`),
-  // Readings, level, parts, mnemonic and origin for each kanji of an item,
+  // Readings, level, parts, origin and example words for each kanji of an item,
   // plus which reading this word uses. The first word to contain an uncached
   // kanji costs one AI call; after that it comes from the server's cache.
   getItemKanji: (itemId) => request(`/kanji/item/${itemId}`),
