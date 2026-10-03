@@ -178,12 +178,11 @@ function KanjiPanel({ word, family, detail, loading }) {
         <ExampleWords kanji={family.kanji} words={detail?.example_words} skip={[word, ...family.words.map(w => w.japanese)]} />
 
         {family.words.length > 0 && (
-          <div className="pt-2 border-t border-gray-700/60 space-y-1.5">
-            <div className="text-[11px] uppercase tracking-wide text-gray-500">Also in your library</div>
+          <WordList title="Also in your library">
             {family.words.map(w => (
               <WordRow key={w.japanese} word={w.japanese} reading={w.reading} meaning={w.meaning} level={w.jlpt_level} />
             ))}
-          </div>
+          </WordList>
         )}
       </div>
     </div>
@@ -198,29 +197,38 @@ function ExampleWords({ kanji, words, skip }) {
   const shown = (words || []).filter(w => !known.has(w.word))
   if (!shown.length) return null
   return (
-    <div className="pt-2 border-t border-gray-700/60 space-y-1.5">
-      <div className="text-[11px] uppercase tracking-wide text-gray-500">
-        Other words with <span className="jp-text normal-case">{kanji}</span>
-      </div>
+    <WordList title={<>Other words with <span className="jp-text normal-case">{kanji}</span></>}>
       {shown.map(w => (
         <WordRow key={w.word} word={w.word} reading={w.reading} meaning={w.meaning} note={w.link} level={w.jlpt_level} />
       ))}
+    </WordList>
+  )
+}
+
+/** A titled list of WordRows laid out as one grid, so the word column is as
+ * wide as the list's longest word or reading (keeping readings on one line)
+ * but never more than half the panel, which leaves the English room. */
+function WordList({ title, children }) {
+  return (
+    <div className="pt-2 border-t border-gray-700/60 grid grid-cols-[fit-content(50%)_1fr] gap-x-3 gap-y-1.5">
+      <div className="col-span-2 text-[11px] uppercase tracking-wide text-gray-500">{title}</div>
+      {children}
     </div>
   )
 }
 
-/** Word with its reading beneath on the left, English on the right. Stacking
- * the reading gives the meaning the rest of the width, so it rarely wraps on a
- * phone, and when it does it wraps within its own column instead of under the
- * word. */
+/** Word with its reading beneath on the left, English on the right: two cells
+ * of WordList's grid. Stacking the reading gives the meaning the rest of the
+ * width, so it rarely wraps on a phone, and when it does it wraps within its
+ * own column instead of under the word. */
 function WordRow({ word, reading, meaning, note, level }) {
   return (
-    <div className="flex gap-3">
-      <div className="w-[4.5rem] shrink-0 leading-tight">
+    <>
+      <div className="leading-tight">
         <div className="jp-text text-gray-100">{word}</div>
         {reading && <div className="text-xs text-indigo-300"><span className="jp-text">{reading}</span></div>}
       </div>
-      <div className="flex-1 min-w-0 leading-snug">
+      <div className="min-w-0 leading-snug">
         {/* Inline after the text, not a column of its own: a right-hand column
             would take width from the meaning and make it wrap again. */}
         <div className="text-gray-300">
@@ -229,7 +237,7 @@ function WordRow({ word, reading, meaning, note, level }) {
         </div>
         {note && <div className="text-xs text-gray-500">{note}</div>}
       </div>
-    </div>
+    </>
   )
 }
 
