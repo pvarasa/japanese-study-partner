@@ -201,6 +201,31 @@ def _review_reading(item: Item, rating: str) -> ReadingCard:
     return process_review(card, rating, auto_suspend=False)
 
 
+def _roll_over_day(db: Db, session: StudySession) -> StudySession:
+    """The session that progress made *now* should be counted against.
+
+    Stats bucket a session by the local day it started, so a run begun before
+    midnight and finished after it used to credit every review to yesterday —
+    today's dashboard showed nothing for it. A session from an earlier day is
+    restamped if it has nothing recorded yet, or else closed and continued in
+    a fresh session for today. Callers return the resulting id so the client
+    can follow it.
+    """
+    if session.started_at is None or _to_local_date(session.started_at) >= _local_midnight().date():
+        return session
+    now = datetime.now(timezone.utc)
+    if not session.items_reviewed:
+        session.started_at = now
+        return session
+    session.ended_at = now
+    continuation = StudySession(
+        user_id=session.user_id, mode=session.mode, started_at=now,
+        items_reviewed=0, items_correct=0, items_hard=0,
+    )
+    db.add(continuation)
+    return continuation
+
+
 def _bump_session(db: Db, session_id: int, user_id: str, *, reviewed=0, correct=0, hard=0):
     """Fold counter deltas into a session, ignoring unknown/foreign sessions.
 
@@ -213,6 +238,7 @@ def _bump_session(db: Db, session_id: int, user_id: str, *, reviewed=0, correct=
     ).first()
     if not session:
         return None
+    session = _roll_over_day(db, session)
     session.items_reviewed = (session.items_reviewed or 0) + reviewed
     session.items_correct = (session.items_correct or 0) + correct
     session.items_hard = (session.items_hard or 0) + hard
@@ -242,8 +268,9 @@ def review_item(data: SRSReview, user_id: UserId, db: Db):
             scheduled = _review_reading(item, data.rating)
     elif not data.practice:
         process_review(item, data.rating)
+    session = None
     if data.session_id is not None:
-        _bump_session(
+        session = _bump_session(
             db, data.session_id, user_id,
             reviewed=1,
             correct=1 if data.rating == "good" else 0,
@@ -252,6 +279,8 @@ def review_item(data: SRSReview, user_id: UserId, db: Db):
     db.commit()
     return {
         "ok": True,
+        # May differ from the one sent if the session rolled over midnight.
+        "session_id": session.id if session else None,
         "next_due": scheduled.srs_due.isoformat() if scheduled else None,
         "interval_days": round(scheduled.srs_interval, 2) if scheduled else None,
         "suspended": bool(item.suspended),
@@ -400,7 +429,7 @@ def record_progress(session_id: int, data: SessionProgress, user_id: UserId, db:
     if not session:
         raise HTTPException(404, "Session not found")
     db.commit()
-    return {"ok": True, "items_reviewed": session.items_reviewed}
+    return {"ok": True, "session_id": session.id, "items_reviewed": session.items_reviewed}
 
 
 @router.post("/session/{session_id}/end")

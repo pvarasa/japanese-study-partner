@@ -109,7 +109,13 @@ export default function Converse() {
         api.sessionProgress(sessionId, {
           reviewed: 1,
           correct: clean ? 1 : 0,
-        }).catch(() => { /* the conversation matters more than the counter */ })
+        })
+          // A conversation that crossed midnight continues under a new
+          // session so today's turns count toward today; follow it.
+          .then(r => setConvo(prev => (prev.sessionId === sessionId
+            ? { ...prev, sessionId: r.session_id }
+            : prev)))
+          .catch(() => { /* the conversation matters more than the counter */ })
       }
     } catch (err) {
       setError(err.message || 'Failed to submit')

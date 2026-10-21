@@ -311,6 +311,66 @@ def test_end_preserves_accumulated_progress(client):
     assert client.get("/api/study/dashboard").json()["studied_today"] == 1
 
 
+# ---- Sessions that cross midnight ---------------------------------------------
+# Stats bucket a session by the day it started, so a run begun before midnight
+# used to credit every review after it to yesterday.
+
+def _backdate_session(sid, days=1):
+    from datetime import timedelta
+
+    from app.database import get_db
+    from app.main import app
+    from app.models import StudySession
+
+    gen = app.dependency_overrides[get_db]()
+    db = next(gen)
+    s = db.get(StudySession, sid)
+    s.started_at -= timedelta(days=days)
+    db.commit()
+    gen.close()
+
+
+def test_review_on_yesterdays_session_counts_toward_today(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post("/api/study/session/start?mode=flashcard_jp").json()["session_id"]
+    client.post("/api/study/review", json={"item_id": item["id"], "rating": "good", "session_id": sid})
+    _backdate_session(sid)
+    assert client.get("/api/study/dashboard").json()["studied_today"] == 0
+
+    r = client.post("/api/study/review", json={"item_id": item["id"], "rating": "good", "session_id": sid})
+    new_sid = r.json()["session_id"]
+    assert new_sid != sid
+    # The client follows the new id; further reviews land there, not in yet another session.
+    r = client.post("/api/study/review", json={"item_id": item["id"], "rating": "again", "session_id": new_sid})
+    assert r.json()["session_id"] == new_sid
+
+    body = client.get("/api/study/dashboard").json()
+    assert body["studied_today"] == 2
+    assert body["accuracy_today"] == 50.0
+    # Yesterday keeps its review, so the streak spans both days.
+    assert body["streak_days"] == 2
+
+
+def test_empty_session_from_yesterday_is_restamped_not_split(client):
+    item = client.post("/api/items/", json=_make_item()).json()
+    sid = client.post("/api/study/session/start?mode=flashcard_jp").json()["session_id"]
+    _backdate_session(sid)
+
+    r = client.post("/api/study/review", json={"item_id": item["id"], "rating": "good", "session_id": sid})
+    assert r.json()["session_id"] == sid
+    assert client.get("/api/study/dashboard").json()["studied_today"] == 1
+
+
+def test_progress_on_yesterdays_session_rolls_over(client):
+    sid = client.post("/api/study/session/start?mode=converse").json()["session_id"]
+    client.post(f"/api/study/session/{sid}/progress", json={"reviewed": 1})
+    _backdate_session(sid)
+
+    r = client.post(f"/api/study/session/{sid}/progress", json={"reviewed": 1})
+    assert r.json()["session_id"] != sid
+    assert client.get("/api/study/dashboard").json()["studied_today"] == 1
+
+
 # ---- Leeches -----------------------------------------------------------------
 
 def _make_leech(client, **overrides):

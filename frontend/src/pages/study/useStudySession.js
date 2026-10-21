@@ -214,12 +214,16 @@ export function useStudySession() {
     submittingRef.current = true
     setSubmitting(true)
     setError(null)
+    let sessionId = session.sessionId
     try {
       // Passing the session id records this review against the session
       // server-side, so quitting part-way keeps what was already done.
-      await api.reviewItem(
+      const res = await api.reviewItem(
         item.id, rating, session.sessionId, practice, mode === READING_MODE ? 'reading' : 'meaning',
       )
+      // A session that crossed midnight is continued under a new id so
+      // today's reviews count toward today; follow it.
+      if (res.session_id != null) sessionId = res.session_id
     } catch (err) {
       // Keep the card in place so the user can retry the same rating.
       setError(err.message || RATE_ERROR)
@@ -234,7 +238,7 @@ export function useStudySession() {
     if (now.items !== items || now.current !== current) return
 
     const last = current + 1 >= items.length
-    if (last) endSession(session.sessionId)
+    if (last) endSession(sessionId)
     setSession((prev) => {
       if (prev.items !== items || prev.current !== current) return prev
       const sessionStats = {
@@ -244,7 +248,7 @@ export function useStudySession() {
       }
       return last
         ? { ...prev, sessionStats, done: true, sessionId: null }
-        : { ...prev, ...FRESH_CARD, sessionStats, current: current + 1 }
+        : { ...prev, ...FRESH_CARD, sessionStats, sessionId, current: current + 1 }
     })
   }
 
