@@ -1,18 +1,25 @@
 import random
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import APIRouter, Form, HTTPException
-from pydantic import BaseModel
 from sqlalchemy import func
 
 from ..cloze import build_cloze
-from ..crud import format_library_lines
 from ..deps import Db, OwnedItem, UserId
 from ..enrich import build_example_sentence
 from ..levels import LEVEL_DESCRIPTOR, NEW_WORD_TIER, READING_LENGTH, get_jlpt_level
 from ..llm import ai_response, complete_json
 from ..models import Item
-from ..schemas import ExampleSentence, ReadingPassage, ReadingWord, StudyQuestion, VocabHint
+from ..prompts import format_library_lines
+from ..schemas import (
+    EvaluateIn,
+    EvaluateOut,
+    ExampleSentence,
+    ReadingPassage,
+    ReadingWord,
+    StudyQuestion,
+    VocabHint,
+)
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
@@ -177,7 +184,7 @@ Return ONLY valid JSON, no markdown fences."""
 
 
 @router.post("/reading", response_model=ReadingPassage)
-def generate_reading(user_id: UserId, db: Db, prompt: Optional[str] = Form(None)):
+def generate_reading(user_id: UserId, db: Db, prompt: str | None = Form(None)):
     # Random subset for variety, sampled in SQL rather than loading every row.
     sample = (
         db.query(Item).filter(Item.user_id == user_id)
@@ -246,20 +253,8 @@ Return ONLY valid JSON:
 - "corrected": for partial or incorrect, a natural corrected Japanese sentence that preserves their intended meaning. null if verdict is "correct"."""
 
 
-class EvaluateIn(BaseModel):
-    user_answer: str
-    expected_answer: str
-    prompt: str
-
-
-class EvaluateOut(BaseModel):
-    verdict: str
-    feedback: str
-    corrected: Optional[str] = None
-
-
 @router.post("/evaluate", response_model=EvaluateOut)
-def evaluate_answer(data: EvaluateIn, user_id: UserId, db: Db):
+def evaluate_answer(data: EvaluateIn):
     with ai_response("evaluate_answer"):
         result = complete_json(
             EVALUATE_PROMPT.format(
@@ -269,8 +264,11 @@ def evaluate_answer(data: EvaluateIn, user_id: UserId, db: Db):
             ),
             max_tokens=512,
         )
+        # No default verdict: EvaluateOut.verdict is a Literal, so a missing or
+        # unrecognised one becomes a retryable 502. Defaulting to "incorrect"
+        # would schedule a lapse the learner never earned.
         return EvaluateOut(
-            verdict=result.get("verdict", "incorrect"),
+            verdict=result["verdict"],
             feedback=result.get("feedback", ""),
             corrected=result.get("corrected"),
         )

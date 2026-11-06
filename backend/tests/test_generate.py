@@ -47,3 +47,26 @@ def test_lookup_does_not_cache_an_empty_meaning(client, monkeypatch):
     assert client.post("/api/furigana/lookup", json=body).json()["meaning"] == ""
     # The failed reply wasn't cached, so the retry reaches the model again.
     assert client.post("/api/furigana/lookup", json=body).json()["meaning"] == "to eat"
+
+
+_EVAL_BODY = {"user_answer": "毎日食べる。", "expected_answer": "毎日食べます。", "prompt": "I eat every day."}
+
+
+@pytest.mark.parametrize("reply", [
+    {"feedback": "Looks fine."},                       # verdict missing
+    {"verdict": "wrong", "feedback": "Hmm."},          # verdict not one of the three
+])
+def test_evaluate_never_invents_an_incorrect_verdict(client, monkeypatch, reply):
+    """A reply without a usable verdict must be a retryable 502, not "incorrect" —
+    that would schedule a lapse for what was really a bad model response."""
+    monkeypatch.setattr(generate, "complete_json", lambda *a, **k: reply)
+    assert client.post("/api/generate/evaluate", json=_EVAL_BODY).status_code == 502
+
+
+def test_evaluate_passes_a_valid_verdict_through(client, monkeypatch):
+    monkeypatch.setattr(generate, "complete_json", lambda *a, **k: {
+        "verdict": "partial", "feedback": "Use the polite form.", "corrected": "毎日食べます。",
+    })
+    r = client.post("/api/generate/evaluate", json=_EVAL_BODY)
+    assert r.status_code == 200
+    assert r.json()["verdict"] == "partial"

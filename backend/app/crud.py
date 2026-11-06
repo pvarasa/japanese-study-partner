@@ -5,18 +5,19 @@ about HTTP — the 404-on-missing behaviour lives in ``deps.py`` instead.
 """
 from sqlalchemy.orm import Session
 
-from .models import Item, Tag
-
-
-def format_library_lines(items: list[Item]) -> str:
-    """Render items as the "- japanese (reading): meaning" lines several AI
-    prompts (reading passages, conversation starters) use to show library context."""
-    return "\n".join(f"- {it.japanese} ({it.reading}): {it.meaning}" for it in items)
+from .models import Item, StudySession, Tag
 
 
 def get_item_for_user(db: Session, item_id: int, user_id: str) -> Item | None:
     """Fetch an item scoped to its owner. Returns None if absent or not theirs."""
     return db.query(Item).filter(Item.id == item_id, Item.user_id == user_id).first()
+
+
+def get_session_for_user(db: Session, session_id: int, user_id: str) -> StudySession | None:
+    """Fetch a study session scoped to its owner. Returns None if absent or not theirs."""
+    return db.query(StudySession).filter(
+        StudySession.id == session_id, StudySession.user_id == user_id
+    ).first()
 
 
 def get_existing_japanese(db: Session, user_id: str, texts: list[str]) -> set[str]:

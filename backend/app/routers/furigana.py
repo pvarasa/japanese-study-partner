@@ -1,42 +1,20 @@
 import unicodedata
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from ..japanese import annotate, reading_for, tokenize
+from ..schemas import (
+    FuriganaRequest,
+    FuriganaResponse,
+    LookupRequest,
+    LookupResponse,
+    Token,
+    TokenizeRequest,
+    TokenizeResponse,
+)
 from ..translation import get_model, get_provider, translate_lookup
 
 router = APIRouter(prefix="/api/furigana", tags=["furigana"])
-
-
-class FuriganaRequest(BaseModel):
-    texts: list[str]
-
-
-class FuriganaResponse(BaseModel):
-    results: list[str]
-
-
-class TokenizeWord(BaseModel):
-    japanese: str
-    reading: str
-    meaning: str
-
-
-class TokenizeRequest(BaseModel):
-    text: str
-    words: list[TokenizeWord] = []
-
-
-class Token(BaseModel):
-    surface: str
-    reading: str
-    meaning: str
-    lemma: str = ""
-
-
-class TokenizeResponse(BaseModel):
-    tokens: list[Token]
 
 
 @router.post("/annotate", response_model=FuriganaResponse)
@@ -52,33 +30,21 @@ def annotate_texts(req: FuriganaRequest):
 
 @router.post("/tokenize", response_model=TokenizeResponse)
 def tokenize_text(req: TokenizeRequest):
-    """Segment text into tokens with furigana and word meanings for hover."""
-    raw_tokens = tokenize(req.text)
+    """Segment text into tokens with furigana and word meanings for hover.
 
-    # Build lookup from word list: map surface and lemma forms to meaning
-    meaning_map: dict[str, str] = {}
-    for w in req.words:
-        meaning_map[w.japanese] = w.meaning
-
-    result = []
-    for t in raw_tokens:
-        meaning = meaning_map.get(t["surface"], "")
-        if not meaning:
-            meaning = meaning_map.get(t["lemma"], "")
-        result.append(Token(surface=t["surface"], reading=t["reading"], meaning=meaning, lemma=t["lemma"]))
-    return TokenizeResponse(tokens=result)
-
-
-class LookupRequest(BaseModel):
-    surface: str
-    lemma: str = ""
-    context: str = ""
-    is_phrase: bool = False
-
-
-class LookupResponse(BaseModel):
-    meaning: str
-    reading: str = ""
+    A token takes the meaning of the library word matching its surface form,
+    falling back to its lemma so conjugated verbs still find their entry.
+    """
+    meanings = {w.japanese: w.meaning for w in req.words}
+    return TokenizeResponse(tokens=[
+        Token(
+            surface=t["surface"],
+            reading=t["reading"],
+            meaning=meanings.get(t["surface"]) or meanings.get(t["lemma"], ""),
+            lemma=t["lemma"],
+        )
+        for t in tokenize(req.text)
+    ])
 
 
 _lookup_cache: dict[tuple[str, str, str, bool], LookupResponse] = {}
@@ -86,16 +52,11 @@ _lookup_cache: dict[tuple[str, str, str, bool], LookupResponse] = {}
 
 def _is_lookupable(text: str) -> bool:
     """Skip punctuation and pure ASCII/whitespace."""
-    if not text or not text.strip():
-        return False
-    for c in text:
-        try:
-            name = unicodedata.name(c, "")
-        except ValueError:
-            continue
-        if "CJK" in name or "HIRAGANA" in name or "KATAKANA" in name:
-            return True
-    return False
+    return any(
+        script in unicodedata.name(c, "")
+        for c in text
+        for script in ("CJK", "HIRAGANA", "KATAKANA")
+    )
 
 
 @router.post("/lookup", response_model=LookupResponse)

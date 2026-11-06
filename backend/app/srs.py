@@ -17,6 +17,29 @@ HARD_INTERVAL = 0.0416   # ~1 hour in fractional days (used when interval < 1 da
 LEECH_MIN_REVIEWS = 8
 LEECH_MAX_PASS_RATE = 0.6
 
+# At or above this rate an item counts as "strong": the Library's top accuracy
+# bucket (by pass rate) and the cut-off for the dashboard's needs-practice list
+# (by recall rate). Below LEECH_MAX_PASS_RATE it's "struggling".
+STRONG_RATE = 0.85
+
+# Starting ease for a fresh card. The model column defaults mirror it.
+DEFAULT_EASE = 2.5
+
+
+def reset_srs(card: Item | ReadingCard) -> None:
+    """Put a card back to a brand-new, due-now state with no review history.
+
+    Sets every field explicitly rather than relying on column defaults, which
+    only fill in at flush — too late for a ``process_review`` that runs first.
+    """
+    card.srs_interval = 0
+    card.srs_ease = DEFAULT_EASE
+    card.srs_due = datetime.now(timezone.utc)
+    card.srs_reviews = 0
+    card.srs_correct = 0
+    card.srs_hard = 0
+    card.srs_lapses = 0
+
 
 def pass_rate(item: Item) -> float | None:
     """Share of reviews the learner did NOT lapse on ("hard" counts as a pass).

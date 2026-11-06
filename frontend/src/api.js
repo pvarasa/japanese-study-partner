@@ -49,7 +49,6 @@ const qs = (params) => new URLSearchParams(params).toString();
 export const api = {
   // Items
   getItems: (params = {}) => request(`/items/?${qs(params)}`),
-  getItem: (id) => request(`/items/${id}`),
   // enrich=true has the server generate usage notes + example sentences at save
   // time, so the item matches what the import flow produces. Costs one AI call.
   createItem: (data, { enrich = false } = {}) =>
@@ -96,8 +95,8 @@ export const api = {
   // For modes that aren't item reviews (conversation turns).
   sessionProgress: (id, { reviewed = 0, correct = 0, hard = 0 }) =>
     request(`/study/session/${id}/progress`, { method: 'POST', body: { reviewed, correct, hard } }),
-  // Counts are optional — omit them to just close the session without
-  // overwriting the progress already recorded per review.
+  // Only stamps ended_at — counters move per review (/review, /progress), so
+  // closing a session can never overwrite progress already recorded.
   endSession: (id) => request(`/study/session/${id}/end`, { method: 'POST' }),
 
   // Ingest

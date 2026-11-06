@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from ..crud import get_item_for_user
+from ..crud import get_item_for_user, get_session_for_user
 from ..deps import Db, UserId
 from ..kanji import READING_TYPES, is_reading_candidate, kanji_families
 from ..models import Item, ReadingCard, StudySession
@@ -18,7 +18,7 @@ from ..schemas import (
     SessionProgress,
     SRSReview,
 )
-from ..srs import process_review
+from ..srs import STRONG_RATE, process_review, reset_srs
 
 router = APIRouter(prefix="/api/study", tags=["study"])
 
@@ -72,10 +72,6 @@ def _to_local_date(dt: datetime) -> date:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone().date()
 
-
-# Items recalled at least this often are "strong" (the Library's top bucket) and
-# don't belong on the dashboard's needs-practice list.
-WEAK_RECALL_BELOW = 0.85
 
 # No real streak runs longer than this, so bounding the window keeps the
 # streak calculation to one query instead of one query per day of the streak.
@@ -188,15 +184,11 @@ def get_reading_practice(user_id: UserId, db: Db, limit: int = 20):
 def _review_reading(item: Item, rating: str) -> ReadingCard:
     """Apply a rating to the item's reading card, creating it on first review.
 
-    SRS values are set explicitly: column defaults only fill in at flush,
-    and ``process_review`` increments them before that.
     """
     card = item.reading_card
     if card is None:
-        card = ReadingCard(
-            user_id=item.user_id, srs_interval=0, srs_ease=2.5, srs_reviews=0,
-            srs_correct=0, srs_hard=0, srs_lapses=0,
-        )
+        card = ReadingCard(user_id=item.user_id)
+        reset_srs(card)
         item.reading_card = card
     return process_review(card, rating, auto_suspend=False)
 
@@ -233,9 +225,7 @@ def _bump_session(db: Db, session_id: int, user_id: str, *, reviewed=0, correct=
     abandoning one part-way recorded nothing at all — which is why every
     sentence_build, grammar_drill and converse session historically showed zero.
     """
-    session = db.query(StudySession).filter(
-        StudySession.id == session_id, StudySession.user_id == user_id
-    ).first()
+    session = get_session_for_user(db, session_id, user_id)
     if not session:
         return None
     session = _roll_over_day(db, session)
@@ -316,7 +306,9 @@ def get_dashboard(user_id: UserId, db: Db):
         db.query(Item)
         .filter(
             Item.user_id == user_id, Item.srs_reviews >= 2, Item.suspended.is_(False),
-            recall < WEAK_RECALL_BELOW,
+            # Items recalled at least STRONG_RATE of the time are "strong" and
+            # don't belong on the needs-practice list.
+            recall < STRONG_RATE,
         )
         .order_by(recall.asc())
         .limit(10)
@@ -441,9 +433,7 @@ def end_session(session_id: int, user_id: UserId, db: Db):
     fire from an unmount handler, or not at all — the power to overwrite what
     actually happened. Counters only ever move through /review and /progress.
     """
-    session = db.query(StudySession).filter(
-        StudySession.id == session_id, StudySession.user_id == user_id
-    ).first()
+    session = get_session_for_user(db, session_id, user_id)
     if not session:
         raise HTTPException(404, "Session not found")
     session.ended_at = datetime.now(timezone.utc)

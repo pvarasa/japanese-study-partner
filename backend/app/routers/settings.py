@@ -1,19 +1,11 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from ..deps import Db, UserId
 from ..levels import VALID_LEVELS, get_jlpt_level
 from ..models import Setting
+from ..schemas import SettingsOut, SettingsUpdate
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-
-
-class SettingsOut(BaseModel):
-    jlpt_level: str
-
-
-class SettingsUpdate(BaseModel):
-    jlpt_level: str | None = None
 
 
 @router.get("", response_model=SettingsOut)

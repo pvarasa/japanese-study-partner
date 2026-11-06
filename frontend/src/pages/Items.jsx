@@ -6,11 +6,13 @@ import { pct } from '../format'
 import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'
 import { SkeletonLine } from '../components/Skeleton'
+import { JLPT_LEVELS } from '../context/LevelContext'
 
 // Fetched a page at a time; "Load more" appends the next page.
 const PAGE_SIZE = 200
 const TYPES = ['all', 'word', 'grammar', 'expression']
-const LEVELS = ['all', 'N1', 'N2', 'N3', 'N4', 'N5']
+// Hardest first, matching how the filter reads top to bottom.
+const LEVELS = ['all', ...[...JLPT_LEVELS].reverse()]
 // Buckets use the lenient pass rate ("hard" counts, only "again" is a miss),
 // matching the leech threshold on the server.
 const ACCURACY = [

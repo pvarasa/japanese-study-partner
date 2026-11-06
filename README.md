@@ -52,7 +52,8 @@ jp_study_partner/
 │       ├── kanji_details.py      # Per-kanji readings/level/parts/origin/example words via Claude, cached in KanjiInfo
 │       ├── japanese.py           # fugashi tokenizer helpers: annotate, tokenize, reading_for
 │       ├── levels.py             # JLPT level config + per-level prompt tuning, get_jlpt_level
-│       ├── crud.py               # Shared data access: get_item_for_user, get_or_create_tags
+│       ├── crud.py               # Shared data access: get_item_for_user, get_session_for_user, get_or_create_tags
+│       ├── prompts.py            # Prompt-text helpers shared by routers (format_library_lines)
 │       ├── enrich.py             # Usage notes + example sentences for bare items; owns EXAMPLES_PER_ITEM
 │       ├── llm.py                # Shared LLM helpers: client construction, error-handling wrapper around messages.create, JSON parsing, ai_response guard
 │       ├── translation.py        # Pluggable JP→EN translation: Claude or local Ollama (TRANSLATION_PROVIDER)
@@ -437,7 +438,7 @@ The Kotoba-Whisper default is a Japanese-fine-tuned Whisper variant (~1.5 GB). I
 
 ### Local translations via Ollama (optional)
 
-Set `TRANSLATION_PROVIDER=ollama` to route hover/select word lookups through a local model instead of Claude. Pull the model once on the Ollama host: `ollama pull qwen3.5:9b`. See [`bench_report.html`](./bench_report.html) for the model selection rationale (50-case comparison across 8 providers). Other lookups (ingest, reading-passage generation, conversation tutor) still use Claude.
+Set `TRANSLATION_PROVIDER=ollama` to route hover/select word lookups through a local model instead of Claude. Pull the model once on the Ollama host: `ollama pull qwen3.5:9b`. See [`docs/bench_report.html`](./docs/bench_report.html) for the model selection rationale (50-case comparison across 8 providers). Other lookups (ingest, reading-passage generation, conversation tutor) still use Claude.
 
 When the backend boots with `TRANSLATION_PROVIDER=ollama`, it fires a background prewarm against the configured model so the first user lookup doesn't pay the cold-load tax (~3 min for qwen3.5:9b at Q4). The Ollama request also sets `keep_alive: -1` to pin the model in VRAM indefinitely — once loaded it stays loaded until Ollama itself is restarted.
 

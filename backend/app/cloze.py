@@ -11,7 +11,6 @@ fugashi lemmas, which normalise conjugation back to dictionary form.
 """
 import json
 import random
-from typing import Optional
 
 from .japanese import reading_for, tokenize
 from .models import Item
@@ -19,7 +18,7 @@ from .models import Item
 BLANK = "＿＿＿"
 
 
-def parse_examples(raw: Optional[str]) -> list[dict]:
+def parse_examples(raw: str | None) -> list[dict]:
     """Tolerant parse of the example_sentences JSON-string column.
 
     Mirrors the frontend's ``parseExamples``: the column is LLM-authored with no
@@ -94,7 +93,7 @@ def _token_spans(text: str) -> list[tuple[int, int, str, str]]:
     return spans
 
 
-def _find_span(sentence: str, forms: list[str]) -> Optional[tuple[int, int]]:
+def _find_span(sentence: str, forms: list[str]) -> tuple[int, int] | None:
     """Locate a target form in the sentence, returning (start, end) or None."""
     # Exact match first, longest form wins so 把握する beats 把握.
     for form in forms:
@@ -140,7 +139,7 @@ def accepted_answers(removed: str, item: Item) -> list[str]:
     return list(dict.fromkeys(a for a in answers if a))
 
 
-def build_cloze(item: Item, rng: Optional[random.Random] = None) -> Optional[dict]:
+def build_cloze(item: Item, rng: random.Random | None = None) -> dict | None:
     """Blank the item out of one of its example sentences.
 
     Returns None when no stored example contains the word in any recognisable

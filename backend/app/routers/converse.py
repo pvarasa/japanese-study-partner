@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 from sqlalchemy import func
 
-from ..crud import format_library_lines
 from ..deps import Db, UserId
 from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
 from ..llm import ai_response, complete_json
 from ..models import Item
+from ..prompts import format_library_lines
+from ..schemas import Correction, ReplyIn, ReplyOut, StartOut
 
 router = APIRouter(prefix="/api/converse", tags=["converse"])
 
@@ -48,36 +48,6 @@ Return ONLY valid JSON with keys:
 - "feedback": short English encouragement
 - "follow_up": the next Japanese question
 - "follow_up_hint": short English gloss of the follow-up"""
-
-
-class StartOut(BaseModel):
-    topic: str
-    question: str
-    english_hint: str
-
-
-class HistoryTurn(BaseModel):
-    role: str  # "tutor" | "learner"
-    content: str
-
-
-class ReplyIn(BaseModel):
-    history: list[HistoryTurn] = []
-    user_text: str
-
-
-class Correction(BaseModel):
-    original: str
-    fixed: str
-    note: str
-
-
-class ReplyOut(BaseModel):
-    corrections: list[Correction]
-    rewrite: str
-    feedback: str
-    follow_up: str
-    follow_up_hint: str
 
 
 @router.post("/start", response_model=StartOut)
@@ -127,7 +97,7 @@ def reply(data: ReplyIn, user_id: UserId, db: Db):
                 level=level,
                 descriptor=LEVEL_DESCRIPTOR[level],
                 history=history_text,
-                user_text=data.user_text.replace('"', '\\"'),
+                user_text=data.user_text,
             ),
             max_tokens=1536,
         )

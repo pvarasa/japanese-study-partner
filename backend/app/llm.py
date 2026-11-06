@@ -5,6 +5,7 @@ import os
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import cache
 from typing import Any
 
 from anthropic import (
@@ -61,10 +62,17 @@ def ai_response(operation: str, **context: Any) -> Iterator[None]:
 
 
 def get_anthropic_client() -> Anthropic:
-    """Return a configured Anthropic client, raising HTTP 500 if the API key is missing."""
+    """Return the shared Anthropic client, raising HTTP 500 if the API key is missing."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    return _client_for(api_key)
+
+
+@cache
+def _client_for(api_key: str) -> Anthropic:
+    # One client per key, so its HTTP connection pool is reused across calls
+    # instead of every request paying a fresh TLS handshake.
     return Anthropic(api_key=api_key)
 
 
@@ -129,18 +137,18 @@ def complete_json(content: str, *, max_tokens: int, model: str = DEFAULT_MODEL) 
     return parse_json_response(text)
 
 
-def call_claude(client: Anthropic, *, retry_on_overload: bool = True, **kwargs) -> Any:
+def call_claude(client: Anthropic, **kwargs) -> Any:
     """Call ``client.messages.create`` with friendly error translation.
 
     Anthropic SDK exceptions are converted to ``HTTPException`` with a concise
     user-facing ``detail`` and a compact log line — no stack trace for transient
-    upstream issues. Overload (HTTP 529) gets a single retry by default.
+    upstream issues. Overload (HTTP 529) gets a single retry.
     """
     # Sonnet 5 runs adaptive thinking by default when `thinking` is omitted. These
     # are all small, structured-JSON calls where thinking only adds latency and
     # cost (and eats into max_tokens), so disable it unless a caller opts in.
     kwargs.setdefault("thinking", {"type": "disabled"})
-    attempts = 2 if retry_on_overload else 1
+    attempts = 2
     for attempt in range(1, attempts + 1):
         try:
             return client.messages.create(**kwargs)

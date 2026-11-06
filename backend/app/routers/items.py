@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query
 from sqlalchemy import Float, cast, func, or_
@@ -10,6 +9,7 @@ from ..enrich import build_enrichment
 from ..levels import LEVEL_DESCRIPTOR, get_jlpt_level
 from ..models import Item, Tag
 from ..schemas import ItemCreate, ItemOut, ItemUpdate
+from ..srs import LEECH_MAX_PASS_RATE, STRONG_RATE, reset_srs
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
@@ -57,11 +57,11 @@ def list_items(
         if accuracy == "new":
             q = q.filter(Item.srs_reviews == 0)
         elif accuracy == "struggling":
-            q = q.filter(Item.srs_reviews > 0, acc < 0.6)
+            q = q.filter(Item.srs_reviews > 0, acc < LEECH_MAX_PASS_RATE)
         elif accuracy == "learning":
-            q = q.filter(Item.srs_reviews > 0, acc >= 0.6, acc < 0.85)
+            q = q.filter(Item.srs_reviews > 0, acc >= LEECH_MAX_PASS_RATE, acc < STRONG_RATE)
         elif accuracy == "strong":
-            q = q.filter(Item.srs_reviews > 0, acc >= 0.85)
+            q = q.filter(Item.srs_reviews > 0, acc >= STRONG_RATE)
     q = q.order_by(Item.created_at.desc())
     items = q.offset(offset).limit(limit).all()
     return [ItemOut.model_validate(i) for i in items]
@@ -140,13 +140,7 @@ def unsuspend_item(item: OwnedItem, db: Db, reset: bool = True):
     """
     item.suspended = False
     if reset:
-        item.srs_reviews = 0
-        item.srs_correct = 0
-        item.srs_hard = 0
-        item.srs_lapses = 0
-        item.srs_ease = 2.5
-        item.srs_interval = 0
-        item.srs_due = datetime.now(timezone.utc)
+        reset_srs(item)
     db.commit()
     db.refresh(item)
     return ItemOut.model_validate(item)

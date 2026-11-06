@@ -33,7 +33,7 @@ class Item(Base):
 
     # SRS fields
     srs_interval = Column(Float, default=0)  # days until next review
-    srs_ease = Column(Float, default=2.5)
+    srs_ease = Column(Float, default=srs.DEFAULT_EASE)
     srs_due = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     srs_reviews = Column(Integer, default=0)
     # "good" ratings only. Rows created before the hard/correct split also have
@@ -90,7 +90,7 @@ class ReadingCard(Base):
     item_id = Column(Integer, ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
     user_id = Column(String(100), nullable=False, index=True)
     srs_interval = Column(Float, default=0, nullable=False)
-    srs_ease = Column(Float, default=2.5, nullable=False)
+    srs_ease = Column(Float, default=srs.DEFAULT_EASE, nullable=False)
     srs_due = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     srs_reviews = Column(Integer, default=0, nullable=False)
     srs_correct = Column(Integer, default=0, nullable=False)

@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -8,35 +8,35 @@ from pydantic import BaseModel, ConfigDict, field_validator
 class ItemCreate(BaseModel):
     type: str  # word, grammar, expression
     japanese: str
-    reading: Optional[str] = None
+    reading: str | None = None
     meaning: str
-    notes: Optional[str] = None
-    example_sentences: Optional[str] = None  # JSON string
-    jlpt_level: Optional[str] = None
-    source_id: Optional[int] = None
+    notes: str | None = None
+    example_sentences: str | None = None  # JSON string
+    jlpt_level: str | None = None
+    source_id: int | None = None
     tags: list[str] = []
 
 
 class ItemUpdate(BaseModel):
-    japanese: Optional[str] = None
-    reading: Optional[str] = None
-    meaning: Optional[str] = None
-    notes: Optional[str] = None
-    example_sentences: Optional[str] = None
-    jlpt_level: Optional[str] = None
-    tags: Optional[list[str]] = None
+    japanese: str | None = None
+    reading: str | None = None
+    meaning: str | None = None
+    notes: str | None = None
+    example_sentences: str | None = None
+    jlpt_level: str | None = None
+    tags: list[str] | None = None
 
 
 class ItemOut(BaseModel):
     id: int
     type: str
     japanese: str
-    reading: Optional[str]
+    reading: str | None
     meaning: str
-    notes: Optional[str]
-    example_sentences: Optional[str]
-    jlpt_level: Optional[str]
-    source_id: Optional[int]
+    notes: str | None
+    example_sentences: str | None
+    jlpt_level: str | None
+    source_id: int | None
     created_at: datetime
     srs_interval: float
     srs_ease: float
@@ -48,8 +48,8 @@ class ItemOut(BaseModel):
     suspended: bool
     # Derived on the model so clients don't re-implement the arithmetic.
     # Both are None until the item has been reviewed at least once.
-    pass_rate: Optional[float]
-    recall_rate: Optional[float]
+    pass_rate: float | None
+    recall_rate: float | None
     is_leech: bool
     tags: list[str] = []
 
@@ -84,7 +84,7 @@ class KanjiSibling(BaseModel):
     japanese: str
     reading: str
     meaning: str
-    jlpt_level: Optional[str] = None
+    jlpt_level: str | None = None
 
 
 class KanjiFamily(BaseModel):
@@ -103,7 +103,7 @@ class KanjiExampleWord(BaseModel):
     reading: str = ""
     meaning: str
     link: str = ""  # how the kanji's meaning shows up in the word
-    jlpt_level: Optional[str] = None
+    jlpt_level: str | None = None
 
 
 class KanjiDetail(BaseModel):
@@ -113,13 +113,13 @@ class KanjiDetail(BaseModel):
     meaning: str
     onyomi: list[str] = []
     kunyomi: list[str] = []
-    jlpt_level: Optional[str] = None
-    strokes: Optional[int] = None
+    jlpt_level: str | None = None
+    strokes: int | None = None
     components: list[KanjiComponent] = []
     origin: str = ""
     example_words: list[KanjiExampleWord] = []
-    reading_in_word: Optional[str] = None
-    reading_kind: Optional[Literal["on", "kun"]] = None
+    reading_in_word: str | None = None
+    reading_kind: Literal["on", "kun"] | None = None
 
 
 class ReadingItemOut(ItemOut):
@@ -127,7 +127,7 @@ class ReadingItemOut(ItemOut):
 
     ``reading_card`` is None for an item that has never had a reading review.
     """
-    reading_card: Optional[ReadingCardStats] = None
+    reading_card: ReadingCardStats | None = None
     kanji: list[KanjiFamily] = []
 
 
@@ -139,7 +139,7 @@ class SRSReview(BaseModel):
     card: Literal["meaning", "reading"] = "meaning"
     # When present the server folds this review into the session's counters, so
     # progress survives abandoning the session part-way. See routers/study.py.
-    session_id: Optional[int] = None
+    session_id: int | None = None
     # Practice reps are extra drilling outside the SRS schedule — the server
     # records the rep but leaves the item's schedule/history untouched.
     practice: bool = False
@@ -155,11 +155,11 @@ class SessionProgress(BaseModel):
 class IngestItem(BaseModel):
     type: str
     japanese: str
-    reading: Optional[str] = None
+    reading: str | None = None
     meaning: str
-    notes: Optional[str] = None
-    example_sentences: Optional[str] = None
-    jlpt_level: Optional[str] = None
+    notes: str | None = None
+    example_sentences: str | None = None
+    jlpt_level: str | None = None
     tags: list[str] = []
     # Set server-side on the extraction response only, when `japanese` matches
     # an item already in the user's library (or repeats earlier in the same
@@ -200,8 +200,8 @@ class StudyQuestion(BaseModel):
     prompt: str
     answer: str
     options: list[str] = []  # for multiple choice
-    context: Optional[str] = None
-    translation: Optional[str] = None
+    context: str | None = None
+    translation: str | None = None
     vocabulary: list[VocabHint] = []  # key-word hints for sentence_build
     # Alternate spellings graded as correct (cloze accepts the kana reading as
     # well as the kanji, so the mode works without a Japanese IME).
@@ -245,3 +245,103 @@ class DashboardStats(BaseModel):
     streak_days: int
     leeches: list[ItemOut] = []
     suspended_count: int = 0
+
+
+# --- Sentence-build evaluation (routers/generate.py) ---
+
+class EvaluateIn(BaseModel):
+    user_answer: str
+    expected_answer: str
+    prompt: str
+
+
+class EvaluateOut(BaseModel):
+    verdict: Literal["correct", "partial", "incorrect"]
+    feedback: str
+    corrected: str | None = None
+
+
+# --- Settings (routers/settings.py) ---
+
+class SettingsOut(BaseModel):
+    jlpt_level: str
+
+
+class SettingsUpdate(BaseModel):
+    jlpt_level: str | None = None
+
+
+# --- Furigana / tokenize / lookup (routers/furigana.py) ---
+
+class FuriganaRequest(BaseModel):
+    texts: list[str]
+
+
+class FuriganaResponse(BaseModel):
+    results: list[str]
+
+
+class TokenizeWord(BaseModel):
+    japanese: str
+    reading: str
+    meaning: str
+
+
+class TokenizeRequest(BaseModel):
+    text: str
+    words: list[TokenizeWord] = []
+
+
+class Token(BaseModel):
+    surface: str
+    reading: str
+    meaning: str
+    lemma: str = ""
+
+
+class TokenizeResponse(BaseModel):
+    tokens: list[Token]
+
+
+class LookupRequest(BaseModel):
+    surface: str
+    lemma: str = ""
+    context: str = ""
+    is_phrase: bool = False
+
+
+class LookupResponse(BaseModel):
+    meaning: str
+    reading: str = ""
+
+
+# --- Conversation tutor (routers/converse.py) ---
+
+class StartOut(BaseModel):
+    topic: str
+    question: str
+    english_hint: str
+
+
+class HistoryTurn(BaseModel):
+    role: str  # "tutor" | "learner"
+    content: str
+
+
+class ReplyIn(BaseModel):
+    history: list[HistoryTurn] = []
+    user_text: str
+
+
+class Correction(BaseModel):
+    original: str
+    fixed: str
+    note: str
+
+
+class ReplyOut(BaseModel):
+    corrections: list[Correction]
+    rewrite: str
+    feedback: str
+    follow_up: str
+    follow_up_hint: str
