@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Upload, Link, FileText, Check, X, Loader2 } from 'lucide-react'
+import { Upload, Link, FileText, Check, Loader2 } from 'lucide-react'
 import { api } from '../api'
 import Badge from '../components/Badge'
 import Ruby from '../components/Ruby'

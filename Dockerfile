@@ -2,14 +2,15 @@
 FROM node:22-slim AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm install
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: runtime
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Pinned so an image rebuild can't silently change the resolver; bump deliberately.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
 
 WORKDIR /app/backend
 

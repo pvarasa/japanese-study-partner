@@ -18,6 +18,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          version: "0.13.7"  # keep in step with the Dockerfile's uv image
 
       - name: Install backend dev deps
         run: uv sync --frozen --group dev
@@ -38,11 +39,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # npm install, not npm ci: package-lock.json is out of sync with
-      # package.json (stale @emnapi/* transitive deps), so `npm ci` fails on
-      # Linux. Regenerate the lockfile before tightening this.
       - name: Install frontend deps
-        run: npm install
+        run: npm ci
         working-directory: frontend
 
       - name: ESLint
