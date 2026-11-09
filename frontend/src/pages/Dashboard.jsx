@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Brain, BookOpen, Target, Flame, AlertTriangle, RotateCcw } from 'lucide-react'
+import { Brain, BookOpen, Target, Flame, AlertTriangle, RotateCcw, Star, ChevronRight } from 'lucide-react'
 import { api } from '../api'
 import { pct } from '../format'
 import { useOnPageVisible } from '../hooks/useOnPageVisible'
@@ -114,6 +114,20 @@ export default function Dashboard() {
         >
           <Brain className="inline mr-2" size={20} />
           Study {stats.due_today} due items
+        </Link>
+      )}
+
+      {/* Kanji starred on the Read Kanji reveal, waiting to be revisited */}
+      {stats.marked_kanji > 0 && (
+        <Link
+          to="/kanji"
+          className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm hover:border-amber-500/40 hover:bg-gray-800/50 transition-colors"
+        >
+          <Star size={16} className="text-amber-400" fill="currentColor" />
+          <span className="flex-1 text-gray-300">
+            {stats.marked_kanji} marked kanji to revisit
+          </span>
+          <ChevronRight size={16} className="text-gray-500" />
         </Link>
       )}
 

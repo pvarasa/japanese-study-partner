@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
-import { BookOpen, Brain, BarChart3, Upload, Menu, X, FileText, Minus, Plus, MessagesSquare } from 'lucide-react'
+import { BookOpen, Brain, BarChart3, Upload, Menu, X, FileText, Minus, Plus, MessagesSquare, Star } from 'lucide-react'
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import ErrorBoundary from './components/ErrorBoundary'
 import { usePersistentState } from './hooks/usePersistentState'
@@ -10,6 +10,7 @@ import Study from './pages/Study'
 import Ingest from './pages/Ingest'
 import Reading from './pages/Reading'
 import Converse from './pages/Converse'
+import MarkedKanji from './pages/MarkedKanji'
 import { api } from './api'
 import { LevelContext, JLPT_LEVELS } from './context/LevelContext'
 import { FeaturesContext } from './context/FeaturesContext'
@@ -19,6 +20,7 @@ const navItems = [
   { to: '/items', icon: BookOpen, label: 'Library' },
   { to: '/import', icon: Upload, label: 'Import' },
   { to: '/study', icon: Brain, label: 'Study' },
+  { to: '/kanji', icon: Star, label: 'Kanji' },
   { to: '/reading', icon: FileText, label: 'Read' },
   { to: '/converse', icon: MessagesSquare, label: 'Converse' },
 ]
@@ -204,6 +206,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/items" element={<Items />} />
             <Route path="/study" element={<Study />} />
+            <Route path="/kanji" element={<MarkedKanji />} />
             <Route path="/import" element={<Ingest />} />
             <Route path="/reading" element={<Reading />} />
             <Route path="/converse" element={<Converse />} />

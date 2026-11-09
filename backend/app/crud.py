@@ -5,7 +5,7 @@ about HTTP — the 404-on-missing behaviour lives in ``deps.py`` instead.
 """
 from sqlalchemy.orm import Session
 
-from .models import Item, StudySession, Tag
+from .models import Item, KanjiMark, StudySession, Tag
 
 
 def get_item_for_user(db: Session, item_id: int, user_id: str) -> Item | None:
@@ -55,3 +55,8 @@ def get_or_create_tags(db: Session, tag_names: list[str]) -> list[Tag]:
 
     db.flush()
     return [by_name[name] for name in names]
+
+
+def get_marked_kanji(db: Session, user_id: str) -> set[str]:
+    """The kanji this user has marked to revisit."""
+    return {k for (k,) in db.query(KanjiMark.kanji).filter(KanjiMark.user_id == user_id)}

@@ -26,6 +26,9 @@ const FRESH_CARD = {
 
 const NO_SESSION = {
   mode: null,
+  // Reading drill over words containing a marked kanji. Always practice
+  // (unscheduled), whatever the Due/Practice toggle says.
+  marked: false,
   items: [],
   current: 0,
   sessionId: null,
@@ -165,17 +168,18 @@ export function useStudySession() {
     return () => { cancelled = true }
   }, [needsEvaluation, userAnswer, question])
 
-  const startStudy = async (m) => {
+  const startStudy = async (m, { marked = false } = {}) => {
     const run = ++startRunRef.current
     endSession(sessionRef.current.sessionId)
-    setSession({ ...NO_SESSION, mode: m })
+    const asPractice = practice || marked
+    setSession({ ...NO_SESSION, mode: m, marked })
     setError(null)
     setStartingSession(true)
     try {
       const fetchItems = m === READING_MODE
-        ? (practice ? api.getReadingPractice : api.getReadingDue)
-        : (practice ? api.getPracticeItems : api.getDueItems)
-      const due = await fetchItems({ limit: 20 })
+        ? (asPractice ? api.getReadingPractice : api.getReadingDue)
+        : (asPractice ? api.getPracticeItems : api.getDueItems)
+      const due = await fetchItems({ limit: 20, ...(marked && { marked: true }) })
       if (startRunRef.current !== run) return
       if (due.length === 0) {
         setSession(prev => ({ ...prev, done: true }))
@@ -184,7 +188,7 @@ export function useStudySession() {
       // Distinct mode label keeps practice reps out of accuracy_today and the
       // retention chart (see GRADED_MODES in routers/study.py) while still
       // counting toward studied-today and the streak, same as converse turns.
-      const sess = await api.startSession(practice ? `practice_${m}` : m)
+      const sess = await api.startSession(asPractice ? `practice_${m}` : m)
       if (startRunRef.current !== run) {
         endSession(sess.session_id)
         return
@@ -219,7 +223,7 @@ export function useStudySession() {
       // Passing the session id records this review against the session
       // server-side, so quitting part-way keeps what was already done.
       const res = await api.reviewItem(
-        item.id, rating, session.sessionId, practice, mode === READING_MODE ? 'reading' : 'meaning',
+        item.id, rating, session.sessionId, practice || session.marked, mode === READING_MODE ? 'reading' : 'meaning',
       )
       // A session that crossed midnight is continued under a new id so
       // today's reviews count toward today; follow it.
@@ -280,7 +284,7 @@ export function useStudySession() {
   }))
 
   return {
-    mode, practice, setPractice, items, current,
+    mode, marked: session.marked, practice, setPractice, items, current,
     revealed: session.revealed, setRevealed: setField('revealed'),
     sessionStats: session.sessionStats,
     question, userAnswer, setUserAnswer: setField('userAnswer'), answerChecked,

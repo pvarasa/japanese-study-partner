@@ -122,6 +122,23 @@ class KanjiDetail(BaseModel):
     reading_kind: Literal["on", "kun"] | None = None
 
 
+class KanjiMarkIn(BaseModel):
+    """Body of ``PUT /kanji/marks/{kanji}``. A missing note keeps the stored one,
+    so re-marking from the drill can't wipe what was written on the Kanji page."""
+    note: str | None = None
+
+
+class MarkedKanji(BaseModel):
+    """A marked kanji with what the Kanji page shows for it. ``detail`` is None
+    when the kanji's facts were never generated (its reveal failed to load)."""
+    kanji: str
+    note: str = ""
+    created_at: datetime | None = None
+    detail: KanjiDetail | None = None
+    words: list[KanjiSibling] = []  # library words containing it, capped
+    word_count: int = 0             # how many there are in all
+
+
 class ReadingItemOut(ItemOut):
     """An item served for the kanji-reading drill.
 
@@ -245,6 +262,7 @@ class DashboardStats(BaseModel):
     streak_days: int
     leeches: list[ItemOut] = []
     suspended_count: int = 0
+    marked_kanji: int = 0
 
 
 # --- Sentence-build evaluation (routers/generate.py) ---

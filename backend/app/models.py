@@ -129,6 +129,21 @@ class KanjiInfo(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class KanjiMark(Base):
+    """A kanji the learner starred on the reading drill's reveal, to revisit.
+
+    Unlike ``KanjiInfo`` this is personal, so it carries ``user_id``. No FK to
+    ``kanji_info``: a mark can be made from a reveal whose details failed to
+    load, and the facts are filled in whenever they are generated.
+    """
+    __tablename__ = "kanji_marks"
+
+    user_id = Column(String(100), primary_key=True)
+    kanji = Column(String(4), primary_key=True)
+    note = Column(Text, nullable=False, default="")  # why it was marked, in the learner's words
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Tag(Base):
     __tablename__ = "tags"
 

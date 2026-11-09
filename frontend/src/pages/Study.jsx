@@ -1,4 +1,6 @@
-import { CheckCircle, X } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { CheckCircle, Star, X } from 'lucide-react'
 import LevelBadge from '../components/LevelBadge'
 import { Skeleton, SkeletonLine } from '../components/Skeleton'
 import FlashcardCard from './study/FlashcardCard'
@@ -9,6 +11,22 @@ import { useStudySession } from './study/useStudySession'
 
 export default function Study() {
   const s = useStudySession()
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // The Kanji page's "Practice these" lands here with this state. Cleared
+  // straight away so a reload or back-navigation doesn't restart the run; the
+  // ref covers StrictMode's second effect, which runs before the clear lands.
+  const startMarkedRef = useRef(false)
+  const startMarked = location.state?.startMarked
+  useEffect(() => {
+    if (!startMarked || startMarkedRef.current) return
+    startMarkedRef.current = true
+    navigate('.', { replace: true, state: null })
+    s.startStudy(READING_MODE, { marked: true })
+  }, [startMarked]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restart = () => s.startStudy(s.mode, { marked: s.marked })
 
   // Mode selection
   if (!s.mode) {
@@ -54,6 +72,15 @@ export default function Study() {
               <div className="text-sm text-gray-500">{m.desc}</div>
             </button>
           ))}
+          <button
+            onClick={() => s.startStudy(READING_MODE, { marked: true })}
+            className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-left hover:border-amber-500/50 hover:bg-gray-800/50 transition-all"
+          >
+            <div className="font-medium text-lg text-gray-100 flex items-center gap-1.5">
+              <Star size={16} className="text-amber-400" fill="currentColor" /> Marked Kanji
+            </div>
+            <div className="text-sm text-gray-500">Read words containing the kanji you starred. Always practice, never rescheduled</div>
+          </button>
         </div>
       </div>
     )
@@ -86,9 +113,14 @@ export default function Study() {
         <CheckCircle className="mx-auto text-green-400" size={48} />
         <h2 className="text-2xl font-bold">
           {s.items.length === 0
-            ? (s.practice ? 'Nothing to practice yet' : 'All caught up!')
+            ? (s.marked ? 'No marked kanji to practice' : s.practice ? 'Nothing to practice yet' : 'All caught up!')
             : 'Session Complete!'}
         </h2>
+        {s.items.length === 0 && s.marked && (
+          <p className="text-sm text-gray-500 max-w-sm mx-auto">
+            Tap the star next to a kanji on the Read Kanji reveal. Words in your library that contain it will show up here.
+          </p>
+        )}
         {s.sessionStats.reviewed > 0 && (
           <div className="text-gray-400">
             <p>Reviewed: {s.sessionStats.reviewed} items</p>
@@ -100,7 +132,7 @@ export default function Study() {
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-500">
             Back to modes
           </button>
-          <button onClick={() => s.startStudy(s.mode)}
+          <button onClick={restart}
             className="border border-gray-700 text-gray-300 px-4 py-2 rounded-lg hover:bg-gray-800">
             Study again
           </button>
@@ -118,7 +150,7 @@ export default function Study() {
         <X className="mx-auto text-red-400" size={28} />
         <div className="text-sm text-red-300/90">{s.error || START_ERROR}</div>
         <div className="flex gap-2 justify-center pt-1">
-          <button onClick={() => s.startStudy(s.mode)}
+          <button onClick={restart}
             className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-500 text-sm">
             Try again
           </button>

@@ -89,6 +89,14 @@ export const api = {
   // plus which reading this word uses. The first word to contain an uncached
   // kanji costs one AI call; after that it comes from the server's cache.
   getItemKanji: (itemId) => request(`/kanji/item/${itemId}`),
+  // Kanji the learner marked to revisit, each with its cached details and the
+  // library words containing it. Marking returns the same shape for one kanji;
+  // leaving `note` out keeps the stored note.
+  getKanjiMarks: () => request('/kanji/marks'),
+  markKanji: (kanji, note) => request(`/kanji/marks/${encodeURIComponent(kanji)}`, {
+    method: 'PUT', ...(note !== undefined && { body: { note } }),
+  }),
+  unmarkKanji: (kanji) => request(`/kanji/marks/${encodeURIComponent(kanji)}`, { method: 'DELETE' }),
   getDashboard: () => request('/study/dashboard'),
   getHistory: (days = 60) => request(`/study/history?days=${days}`),
   startSession: (mode) => request(`/study/session/start?mode=${mode}`, { method: 'POST' }),

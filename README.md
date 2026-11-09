@@ -61,7 +61,7 @@ jp_study_partner/
 │       └── routers/
 │           ├── items.py          # CRUD for study items + suspend/unsuspend
 │           ├── study.py          # Due items, reviews, sessions, dashboard, history, kanji-reading queues
-│           ├── kanji.py          # Per-kanji details for the kanji-reading drill
+│           ├── kanji.py          # Per-kanji details for the kanji-reading drill; marked kanji
 │           ├── ingest.py         # Text/URL/PDF ingestion via Claude API
 │           ├── generate.py       # Question generation (cloze locally, the rest via Claude) & reading passages
 │           ├── furigana.py       # Furigana HTTP endpoints (tokenizer lives in app/japanese.py)
@@ -91,6 +91,7 @@ jp_study_partner/
             ├── Dashboard.jsx     # Stats, retention trend, leech rework queue, weak areas, streak
             ├── Items.jsx         # Library: search, type/level/accuracy/status filters, suspend, inline edit, delete
             ├── Study.jsx         # Flashcards, cloze, AI drills & kanji reading with SRS; example-sentence button
+            ├── MarkedKanji.jsx   # Kanji page: kanji starred on the Read Kanji reveal, with notes
             ├── study/            # Study.jsx's session hook (useStudySession) and card components
             ├── Reading.jsx       # AI reading practice with library + new vocabulary
             ├── Converse.jsx      # Conversation mode: tutor prompts, typed/spoken replies, corrections
@@ -155,6 +156,11 @@ Per-kanji facts shown on the Read Kanji reveal: `kanji` (PK), `meaning`, `onyomi
 drilled word contains the kanji, then cached. **Global like Tag** — no `user_id`, because
 kanji facts are the same for everyone.
 
+### KanjiMark
+A kanji the learner starred on the Read Kanji reveal to come back to. Composite PK
+`user_id + kanji`, plus `note` and `created_at`. **Per user**, unlike KanjiInfo, and with no
+FK to it: a kanji can be marked from a reveal whose details failed to load.
+
 ### Tag
 Many-to-many with Item via `item_tags` join table. Tags are global (shared label names across users).
 
@@ -202,9 +208,9 @@ Base URL: `http://localhost:8000/api`
 | GET | `/study/due` | Get items due for review (excludes suspended). Query: `limit`, `type` |
 | GET | `/study/practice` | Random active items regardless of schedule, for extra reps. Query: `limit`, `type` |
 | GET | `/study/reading/due` | Queue for the Read Kanji mode: due reading cards first, topped up with never-reviewed kanji vocabulary, best-known meaning first. Each item carries `reading_card` stats and `kanji` (the other library words sharing each kanji). Query: `limit` |
-| GET | `/study/reading/practice` | Random kanji vocabulary regardless of reading schedule. Query: `limit` |
+| GET | `/study/reading/practice` | Random kanji vocabulary regardless of reading schedule. Query: `limit`, `marked` (`true` narrows it to words containing a marked kanji) |
 | POST | `/study/review` | Submit review. Body: `{item_id, rating, card?, session_id?, practice?}` where rating is `again`/`hard`/`good`. `card` is `meaning` (default, the item's own schedule) or `reading` (its ReadingCard; 422 for an item with no kanji). With `session_id`, folds the review into that session's counters in the same transaction. `practice: true` counts the review without rescheduling anything |
-| GET | `/study/dashboard` | Stats: total, due, studied today, accuracy, weak items, streak, leeches, suspended count |
+| GET | `/study/dashboard` | Stats: total, due, studied today, accuracy, weak items, streak, leeches, suspended count, marked kanji count |
 | GET | `/study/history` | Per-day graded review counts for the trend chart. Query: `days` (default 60, max 365) |
 | POST | `/study/session/start` | Start session. Query: `mode` |
 | POST | `/study/session/{id}/progress` | Add to a session's counters. Body: `{reviewed, correct, hard}`. For modes that aren't item reviews (conversation turns) |
@@ -214,6 +220,9 @@ Base URL: `http://localhost:8000/api`
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/kanji/item/{item_id}` | Details for each kanji in an item's word, in order: `meaning`, `onyomi`, `kunyomi`, `jlpt_level`, `strokes`, `components`, `origin`, `example_words`, plus `reading_in_word` / `reading_kind` (`on`/`kun`) — which listed reading this word uses, a heuristic that's `null` for irregular readings like 今日. Uncached kanji cost one Claude call per request (all of them together), then come from the `KanjiInfo` cache |
+| GET | `/kanji/marks` | Marked kanji, newest first: `kanji`, `note`, `created_at`, `detail` (the cached KanjiInfo, or `null` if never generated), `words` (up to 12 library words containing it) and `word_count`. Never calls Claude |
+| PUT | `/kanji/marks/{kanji}` | Mark a kanji (idempotent). Optional body `{note}` sets the note; leaving it out keeps the stored one. 422 unless the path is exactly one kanji |
+| DELETE | `/kanji/marks/{kanji}` | Unmark a kanji (not an error if it wasn't marked) |
 
 ### Ingest (`/api/ingest`)
 | Method | Path | Description |
@@ -332,7 +341,7 @@ that carry three or four. "Generate example" adds a further one-off sentence bel
 5. **Sentence Building** - Given an English prompt, write the Japanese sentence (free-form input). On submit, calls `/generate/evaluate` for AI assessment: **correct** (accepts natural variations), **almost there** (right idea, grammar/particle error — shows a corrected version), or **incorrect** (wrong meaning).
 6. **Grammar Drill** - AI generates a usage question for a grammar point, 4 multiple-choice options
 
-7. **Read Kanji** - The word in kanji with **no furigana**; recall the reading (typing it is optional, katakana or hiragana both count), then self-grade. Rates the item's separate `ReadingCard` schedule, not its meaning schedule. The reveal breaks the word down kanji by kanji: meaning, JLPT level, stroke count, on/kun readings with **the one this word uses highlighted**, the parts it's built from, a mnemonic, the character's origin, and the other words in your library that share it. Kanji details are generated once by Claude and cached for good; the card fetches them as soon as it appears (and prefetches the next card's), so they're usually ready by the reveal.
+7. **Read Kanji** - The word in kanji with **no furigana**; recall the reading (typing it is optional, katakana or hiragana both count), then self-grade. Rates the item's separate `ReadingCard` schedule, not its meaning schedule. The reveal breaks the word down kanji by kanji: meaning, JLPT level, stroke count, on/kun readings with **the one this word uses highlighted**, the parts it's built from, a mnemonic, the character's origin, and the other words in your library that share it. Kanji details are generated once by Claude and cached for good; the card fetches them as soon as it appears (and prefetches the next card's), so they're usually ready by the reveal. The **star** beside each kanji marks it to revisit: marked kanji are listed on the **Kanji** page (details, library words, a note on why you marked it), and the **Marked Kanji** tile on the Study page drills library words containing them, always as practice, so it never reschedules their reading cards.
 
 Modes 1–7 use SRS rating after each card. Flashcard modes (1–2) include a **Generate example** button on reveal that calls `/generate/example-sentence` to produce a fresh AI-generated sentence with translation; press it multiple times for variety.
 

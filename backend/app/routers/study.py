@@ -5,10 +5,10 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from ..crud import get_item_for_user, get_session_for_user
+from ..crud import get_item_for_user, get_marked_kanji, get_session_for_user
 from ..deps import Db, UserId
-from ..kanji import READING_TYPES, is_reading_candidate, kanji_families
-from ..models import Item, ReadingCard, StudySession
+from ..kanji import READING_TYPES, is_reading_candidate, kanji_families, kanji_in
+from ..models import Item, KanjiMark, ReadingCard, StudySession
 from ..schemas import (
     DashboardStats,
     DayStat,
@@ -175,9 +175,18 @@ def get_reading_due(user_id: UserId, db: Db, limit: int = 20):
 
 
 @router.get("/reading/practice", response_model=list[ReadingItemOut])
-def get_reading_practice(user_id: UserId, db: Db, limit: int = 20):
-    """Random reading-drill items regardless of schedule (see /practice)."""
+def get_reading_practice(user_id: UserId, db: Db, limit: int = 20, marked: bool = False):
+    """Random reading-drill items regardless of schedule (see /practice).
+
+    ``marked=true`` narrows the pool to words containing a kanji the learner
+    marked on a reveal: the kanji drilled in context, through words they
+    already know. It stays practice (unscheduled) on purpose — those words
+    already have reading cards, and a third schedule would compete with them.
+    """
     pool = [i for i in _reading_pool(db, user_id) if is_reading_candidate(i)]
+    if marked:
+        chars = get_marked_kanji(db, user_id)
+        pool = [i for i in pool if chars.intersection(kanji_in(i.japanese))]
     return _serve_reading(db, user_id, random.sample(pool, min(limit, len(pool))))
 
 
@@ -357,6 +366,7 @@ def get_dashboard(user_id: UserId, db: Db):
         streak_days=streak,
         leeches=[ItemOut.model_validate(i) for i in leeches],
         suspended_count=suspended_count,
+        marked_kanji=db.query(func.count(KanjiMark.kanji)).filter(KanjiMark.user_id == user_id).scalar(),
     )
 
 

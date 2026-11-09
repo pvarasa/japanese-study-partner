@@ -105,21 +105,33 @@ def readings_in_word(word: str, reading: str, details: dict[str, dict]) -> dict[
     return found
 
 
+def is_single_kanji(text: str) -> bool:
+    """Whether ``text`` is exactly one kanji (what a kanji mark is keyed on)."""
+    return len(text) == 1 and kanji_in(text) == [text]
+
+
+def as_sibling(item: Item) -> dict:
+    """An item in the shape of ``schemas.KanjiSibling``."""
+    return {
+        "japanese": item.japanese, "reading": item.reading or "",
+        "meaning": item.meaning, "jlpt_level": item.jlpt_level,
+    }
+
+
+def words_with_kanji(kanji: str, library: Iterable[Item]) -> list[Item]:
+    """Library items whose word contains ``kanji``, in library order."""
+    return [i for i in library if kanji in i.japanese]
+
+
 def kanji_families(item: Item, library: Iterable[Item]) -> list[dict]:
     """For each kanji in ``item``, the other library words that contain it.
 
     Kanji with no siblings are still listed (with an empty ``words``) so the
     frontend can render the word's kanji in order either way.
     """
+    library = list(library)
     families = []
     for k in kanji_in(item.japanese):
-        words = [
-            {
-                "japanese": other.japanese, "reading": other.reading or "",
-                "meaning": other.meaning, "jlpt_level": other.jlpt_level,
-            }
-            for other in library
-            if other.id != item.id and k in other.japanese
-        ][:MAX_SIBLINGS]
+        words = [as_sibling(o) for o in words_with_kanji(k, library) if o.id != item.id][:MAX_SIBLINGS]
         families.append({"kanji": k, "words": words})
     return families
